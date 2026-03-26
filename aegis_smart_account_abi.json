@@ -1,0 +1,137 @@
+[
+  {
+    "type": "function",
+    "name": "execute",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      { "name": "target", "type": "address" },
+      { "name": "value",  "type": "uint256" },
+      { "name": "data",   "type": "bytes" }
+    ],
+    "outputs": [
+      { "name": "returnData", "type": "bytes" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "executeBatch",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      { "name": "targets", "type": "address[]" },
+      { "name": "values",  "type": "uint256[]" },
+      { "name": "dataArr", "type": "bytes[]" }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "validateZkProof",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      { "name": "proofHash",  "type": "bytes32" },
+      { "name": "calleeData", "type": "bytes" }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "registerZkProof",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      { "name": "proofHash",    "type": "bytes32" },
+      { "name": "calldataHash", "type": "bytes32" }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "transferEURC",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      { "name": "token",     "type": "address" },
+      { "name": "recipient", "type": "address" },
+      { "name": "amount",    "type": "uint256" }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "validateUserOp",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "userOp",
+        "type": "tuple",
+        "components": [
+          { "name": "sender",             "type": "address" },
+          { "name": "nonce",              "type": "uint256" },
+          { "name": "initCode",           "type": "bytes" },
+          { "name": "callData",           "type": "bytes" },
+          { "name": "accountGasLimits",   "type": "bytes32" },
+          { "name": "preVerificationGas", "type": "uint256" },
+          { "name": "gasFees",            "type": "bytes32" },
+          { "name": "paymasterAndData",   "type": "bytes" },
+          { "name": "signature",          "type": "bytes" }
+        ]
+      },
+      { "name": "userOpHash",          "type": "bytes32" },
+      { "name": "missingAccountFunds", "type": "uint256" }
+    ],
+    "outputs": [
+      { "name": "validationData", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "addDeposit",
+    "stateMutability": "payable",
+    "inputs": [],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getDeposit",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "encryptedViewingKeys",
+    "stateMutability": "view",
+    "inputs": [
+      { "name": "subject", "type": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bytes" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "eurcToken",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address" }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "Executed",
+    "inputs": [
+      { "name": "target", "type": "address", "indexed": true },
+      { "name": "value",  "type": "uint256", "indexed": false },
+      { "name": "data",   "type": "bytes",   "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "ZkProofValidated",
+    "inputs": [
+      { "name": "proofHash", "type": "bytes32", "indexed": true },
+      { "name": "caller",    "type": "address",  "indexed": true }
+    ]
+  }
+]

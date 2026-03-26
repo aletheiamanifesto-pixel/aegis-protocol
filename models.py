@@ -189,7 +189,7 @@ class ViewingKeyPermission(BaseModel):
     active: bool = Field(default=True)
     revoked_at: Optional[datetime] = Field(None)
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def check_expiry_after_grant(cls, values):
         if 'granted_at' in values and 'expires_at' in values:
             if values['expires_at'] <= values['granted_at']:
