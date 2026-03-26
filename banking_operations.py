@@ -28,14 +28,15 @@ _reserve_audits: List[Dict] = []
 
 def get_reserve_ratio() -> float:
     """
-    Calculate the current reserve ratio.
+    Calculate the current reserve ratio (EUR reserves / AEGIS EUR outstanding).
     Should always be >= 1.0 (100%) in a sound system.
     """
-    if _total_withdrawals == 0:
+    outstanding = _total_deposits - _total_withdrawals
+    if outstanding <= 0:
         return 1.0
     if _total_deposits == 0:
         return 0.0
-    return min(1.0, _total_deposits / max(_total_deposits, _total_deposits - _total_withdrawals + 1e-10))
+    return _total_deposits / outstanding
 
 
 # ---------------------------------------------------------------------------

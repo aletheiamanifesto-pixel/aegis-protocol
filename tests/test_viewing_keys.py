@@ -12,9 +12,11 @@ def reset_store():
     """Reset in-memory store before each test."""
     import viewing_keys_service as vks
     vks._permissions.clear()
+    vks._encrypted_payloads.clear()
     vks._access_logs.clear()
     yield
     vks._permissions.clear()
+    vks._encrypted_payloads.clear()
     vks._access_logs.clear()
 
 

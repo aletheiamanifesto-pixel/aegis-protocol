@@ -35,5 +35,5 @@ def get_db():
 
 def init_db() -> None:
     """Create all tables if they do not exist yet."""
-    from db_models import Base as ModelBase  # noqa: F401 – import triggers metadata registration
+    from db_models import Base as ModelBase  # noqa: F401 - import triggers metadata registration
     ModelBase.metadata.create_all(bind=engine)

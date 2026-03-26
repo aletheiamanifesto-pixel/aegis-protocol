@@ -27,6 +27,7 @@ class ViewingKeyError(Exception):
 # ---------------------------------------------------------------------------
 
 _permissions: Dict[str, ViewingKeyPermission] = {}
+_encrypted_payloads: Dict[str, bytes] = {}  # permission_id -> fernet-encrypted payload
 _access_logs: List[AccessLog] = []
 
 
@@ -68,7 +69,7 @@ def create_viewing_key(
     }).encode()
 
     fernet = _get_fernet()
-    fernet.encrypt(data_payload)
+    encrypted = fernet.encrypt(data_payload)
     data_hash = "0x" + hashlib.sha256(data_payload).hexdigest()
 
     permission = ViewingKeyPermission(
@@ -82,6 +83,7 @@ def create_viewing_key(
     )
 
     _permissions[permission.permission_id] = permission
+    _encrypted_payloads[permission.permission_id] = encrypted
     return permission
 
 
@@ -117,7 +119,7 @@ def grant_access(
     }).encode()
 
     fernet = _get_fernet()
-    fernet.encrypt(data_payload)
+    encrypted = fernet.encrypt(data_payload)
     data_hash = "0x" + hashlib.sha256(data_payload).hexdigest()
 
     permission = ViewingKeyPermission(
@@ -131,6 +133,7 @@ def grant_access(
     )
 
     _permissions[permission.permission_id] = permission
+    _encrypted_payloads[permission.permission_id] = encrypted
 
     _log_access(permission.permission_id, "grant_issued", f"Access granted to {grantee} with scope {scope.value}")
     return permission
