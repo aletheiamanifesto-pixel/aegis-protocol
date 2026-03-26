@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+conftest.py - Pytest fixtures for AEGIS Protocol tests.
+"""
+
+import pytest
+import os
+
+# Set env vars before imports
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-for-test")
+os.environ.setdefault("RPC_URL", "http://localhost:8545")
+
+
+@pytest.fixture
+def sample_address():
+    return "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+
+
+@pytest.fixture
+def sample_private_key():
+    return "0x" + "a" * 64
+
+
+@pytest.fixture
+def compliance_engine():
+    from compliance_engine import ComplianceEngine
+    return ComplianceEngine()
