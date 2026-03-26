@@ -308,7 +308,7 @@ async def verify_transaction_limits(
         )
 
     # ── MiCA mandatory ZK-KYC ────────────────────────────────────────────
-    if amount > MICA_THRESHOLD_EUR:
+    if amount >= MICA_THRESHOLD_EUR:
         requires_zk = True
         if "MICA-001" not in triggered:
             triggered.append("MICA-001")

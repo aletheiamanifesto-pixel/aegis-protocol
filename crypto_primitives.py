@@ -102,19 +102,23 @@ def _to_hex_field(value: int) -> str:
     return "0x" + value.to_bytes(BYTES32_LENGTH, byteorder="big").hex()
 
 
-def _keccak256(data: bytes) -> str:
-    """Compute keccak256 and return 0x-prefixed hex string."""
+def _sha3_256(data: bytes) -> str:
+    """Compute SHA3-256 and return 0x-prefixed hex string.
+
+    Note: Ethereum uses Keccak-256 (pre-NIST) which differs from SHA3-256.
+    For off-chain Noir input preparation, SHA3-256 is used as the hashing
+    primitive. On-chain keccak256 hashes are computed by the Solidity contract.
+    """
     return "0x" + hashlib.sha3_256(data).hexdigest()
 
 
 def _hash_address(address: str) -> str:
     """Hash an Ethereum-style address into a field element for Noir.
 
-    Uses SHA3-256 (keccak256-equivalent in stdlib) on the lower-cased,
-    0x-stripped byte representation.
+    Uses SHA3-256 on the lower-cased, 0x-stripped byte representation.
     """
     clean = address.lower().replace("0x", "")
-    return _keccak256(bytes.fromhex(clean)) if len(clean) == 40 else _keccak256(clean.encode())
+    return _sha3_256(bytes.fromhex(clean)) if len(clean) == 40 else _sha3_256(clean.encode())
 
 
 async def prepare_noir_inputs(
