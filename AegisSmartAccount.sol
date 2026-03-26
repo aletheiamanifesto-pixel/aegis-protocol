@@ -432,9 +432,9 @@ contract AegisSmartAccount is IAccount, AccessControl, Initializable, UUPSUpgrad
 
         emit ZkProofVerified(proofHash, msg.sender);
 
-        // Suppress unused variable warning for calleeData placeholder.
-        // In production, calleeData feeds directly into the verifier.
-        calleeData;
+        // NOTE: `calleeData` is intentionally unused in this placeholder.
+        // In production, it will contain the public inputs for the ZK verifier
+        // and will be passed to `IZkVerifier.verify(proofHash, calleeData)`.
     }
 
     /**
@@ -589,11 +589,12 @@ contract AegisSmartAccount is IAccount, AccessControl, Initializable, UUPSUpgrad
     function _payPrefund(uint256 amount) internal {
         if (amount != 0) {
             // Use low-level call to send ETH; ignore return value per ERC-4337.
-            // slither-disable-next-line low-level-calls
-            (bool success, ) = payable(msg.sender).call{value: amount}("");
             // The EntryPoint will revert the entire UserOp if the prefund
-            // transfer fails, so we rely on that guard.
-            (success);
+            // transfer fails, so we intentionally discard the success flag.
+            // slither-disable-next-line low-level-calls,unchecked-lowlevel
+            (bool _sent, ) = payable(msg.sender).call{value: amount}("");
+            // Intentionally unused: EntryPoint handles failure.
+            (_sent);
         }
     }
 
