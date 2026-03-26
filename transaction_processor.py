@@ -5,7 +5,7 @@ Connects to Ethereum via Web3.py and records approved transactions
 on-chain through the AegisSmartAccount contract.
 """
 
-import json
+import hashlib
 import logging
 import os
 from typing import Optional
@@ -15,6 +15,9 @@ from web3.exceptions import Web3Exception
 
 from compliance_engine import ComplianceEngine, ComplianceResult
 from models import EuroDigitalTransaction
+
+# EURC uses 6 decimals, same as USDC
+EURC_DECIMALS = 6
 
 logger = logging.getLogger(__name__)
 
@@ -144,23 +147,30 @@ class TransactionProcessor:
         nonce = self.w3.eth.get_transaction_count(self.account.address)
 
         if self.contract is not None:
-            # Encode the executeCompliant call
-            amount_wei = self.w3.to_wei(transaction.amount, "ether")
-            proof_bytes = (
-                bytes.fromhex(transaction.proof_hash.replace("0x", ""))
-                if transaction.proof_hash
-                else b"\x00" * 32
-            )
+            # EURC uses 6 decimals (like USDC), not 18 like ETH
+            amount_token = int(transaction.amount * (10 ** EURC_DECIMALS))
+
+            # Build proof bytes: use the real proof if available, otherwise
+            # derive a deterministic hash from the tx_hash so the contract
+            # can still enforce uniqueness (replay protection).
+            if transaction.proof_hash:
+                proof_bytes = bytes.fromhex(
+                    transaction.proof_hash.replace("0x", "").zfill(64)
+                )
+            else:
+                proof_bytes = hashlib.sha256(
+                    transaction.tx_hash.encode()
+                ).digest()
+
             tx_data = self.contract.functions.executeCompliant(
                 Web3.to_checksum_address(transaction.recipient_hash),
-                amount_wei,
+                amount_token,
                 proof_bytes,
             ).build_transaction(
                 {
                     "chainId": self.chain_id,
                     "from": self.account.address,
                     "nonce": nonce,
-                    "gas": 200_000,
                 }
             )
         else:

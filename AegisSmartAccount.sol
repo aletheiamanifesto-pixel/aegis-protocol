@@ -44,7 +44,6 @@ contract AegisSmartAccount is Ownable, ReentrancyGuard {
     error OnlyBackend();
     error InvalidRecipient();
     error ZeroAmount();
-    error InvalidProof();
     error ProofAlreadyUsed();
     error TransferFailed();
 
@@ -104,15 +103,25 @@ contract AegisSmartAccount is Ownable, ReentrancyGuard {
     ) external onlyBackend nonReentrant {
         if (_to == address(0)) revert InvalidRecipient();
         if (_amount == 0) revert ZeroAmount();
-        if (_proof == bytes32(0)) revert InvalidProof();
         if (usedProofs[_proof]) revert ProofAlreadyUsed();
 
         usedProofs[_proof] = true;
 
+        // The contract holds EURC; transfer from its own balance.
         bool success = eurc.transfer(_to, _amount);
         if (!success) revert TransferFailed();
 
         emit CompliantTransfer(_to, _amount, _proof);
+    }
+
+    /**
+     * @notice Deposit EURC into this smart account.
+     * @dev    Caller must have approved this contract to spend `_amount` EURC.
+     */
+    function depositEURC(uint256 _amount) external {
+        require(_amount > 0, "Zero deposit");
+        bool success = eurc.transferFrom(msg.sender, address(this), _amount);
+        require(success, "Deposit failed");
     }
 
     // -----------------------------------------------------------------
