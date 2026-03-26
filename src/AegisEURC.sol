@@ -94,7 +94,7 @@ contract AegisEURC is ERC20, ERC20Pausable, AccessControl, ReentrancyGuard {
     constructor(
         address _complianceRegistry,
         address admin
-    ) ERC20("Aegis Euro Coin", "EURC") {
+    ) ERC20("Aegis Euro Coin", "aEURC") {
         if (_complianceRegistry == address(0)) revert ZeroAddress();
         if (admin == address(0)) revert ZeroAddress();
 
@@ -281,32 +281,26 @@ contract AegisEURC is ERC20, ERC20Pausable, AccessControl, ReentrancyGuard {
             revert AddressNotCompliant(to);
         }
 
+        // ── Delegate to ERC20Pausable → ERC20 (actual balance mutation) ─
+        super._update(from, to, value);
+
         // ── Snapshot checkpoint recording ───────────────────────────────
-        //    Only checkpoint when at least one snapshot has been taken.
+        //    Record balances AFTER the transfer so checkpoints reflect the
+        //    actual post-transfer state. Only checkpoint when at least one
+        //    snapshot has been taken.
         if (_currentSnapshotId > 0) {
             uint32 sid = _currentSnapshotId;
             if (from != address(0)) {
-                uint224 newBal = _toUint224(balanceOf(from) - value);
-                _accountBalanceSnapshots[from].push(sid, newBal);
+                _accountBalanceSnapshots[from].push(sid, _toUint224(balanceOf(from)));
             }
             if (to != address(0)) {
-                uint224 newBal = _toUint224(balanceOf(to) + value);
-                _accountBalanceSnapshots[to].push(sid, newBal);
+                _accountBalanceSnapshots[to].push(sid, _toUint224(balanceOf(to)));
             }
             // Update total supply snapshot on mint/burn.
             if (from == address(0) || to == address(0)) {
-                uint256 supply = totalSupply();
-                if (from == address(0)) {
-                    supply += value; // mint
-                } else {
-                    supply -= value; // burn
-                }
-                _totalSupplySnapshots.push(sid, _toUint224(supply));
+                _totalSupplySnapshots.push(sid, _toUint224(totalSupply()));
             }
         }
-
-        // ── Delegate to ERC20Pausable → ERC20 (actual balance mutation) ─
-        super._update(from, to, value);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
