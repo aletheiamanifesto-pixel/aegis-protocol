@@ -7,7 +7,6 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from compliance_engine import ComplianceEngine
 from main_app import app, engine as _global_engine
 
 
