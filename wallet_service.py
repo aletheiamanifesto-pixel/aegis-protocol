@@ -221,7 +221,7 @@ def estimate_fee(from_address: str, to_address: str, amount_eur: float) -> Dict[
         gas_price_gwei = gas_price_wei / 1e9
         estimated_gas = 65000  # ERC-20 transfer
         fee_eth = (gas_price_wei * estimated_gas) / 1e18
-        fee_eur = fee_eth * 3000  # rough ETH/EUR estimate
+        fee_eur = fee_eth * 3000  # Approximate ETH/EUR rate; replace with a price oracle in production
 
         return {
             "estimated_fee_eur": round(fee_eur, 4),

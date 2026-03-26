@@ -13,6 +13,7 @@ Implements:
 
 import hashlib
 import hmac
+import json
 import os
 import struct
 from dataclasses import dataclass, field
@@ -441,7 +442,7 @@ class NoirCircuitInterface:
         """Generate a deterministic mock proof for development."""
         import time
 
-        raw = f"{circuit_name}:{sorted(private_inputs.items())}:{sorted(public_inputs.items())}".encode()
+        raw = f"{circuit_name}:{json.dumps(private_inputs, sort_keys=True)}:{json.dumps(public_inputs, sort_keys=True)}".encode()
         proof_bytes = hashlib.sha3_256(raw).digest()
 
         return NoirProof(

@@ -133,8 +133,10 @@ class TransactionProcessor:
 
         except Exception as exc:
             # Dev-mode mock
+            # Use hashed address, never include private key material in logs/hashes
+            sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
             mock_hash = _mock_tx_hash(
-                sender_private_key[:10] if sender_private_key else "unknown",
+                sender_id,
                 recipient,
                 amount_eur,
             )

@@ -121,7 +121,7 @@ def withdraw_eur(
         "wallet_address": wallet_address,
         "amount_aegis_eur": amount,
         "amount_eur_sent": amount,
-        "destination_iban": iban_clean[:4] + "****" + iban_clean[-4:],  # Masked
+        "destination_iban": iban_clean[:2] + "****" + iban_clean[-2:],  # Masked: show only country + last 2 digits
         "status": "processing",
         "estimated_arrival": (datetime.utcnow() + timedelta(days=2)).isoformat(),
         "timestamp": datetime.utcnow().isoformat(),
