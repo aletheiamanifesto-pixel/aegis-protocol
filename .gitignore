@@ -1,0 +1,19 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+broadcast/
+
+# Docs
+docs/
+
+# Dotenv file
+.env
+
+# Node modules (if using npm for OZ)
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
