@@ -1,3 +1,6 @@
-# Requirements
-
-This file lists the dependencies needed to run the application.
+# Requirements for AEGIS Protocol
+fastapi>=0.104.0,<1.0.0
+uvicorn>=0.24.0,<1.0.0
+pydantic>=1.10.0,<3.0.0
+web3>=7.0.0,<8.0.0
+python-dotenv>=1.0.0,<2.0.0

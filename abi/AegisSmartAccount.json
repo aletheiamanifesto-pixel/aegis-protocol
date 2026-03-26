@@ -1,0 +1,153 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      { "name": "_owner", "type": "address", "internalType": "address" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "registerZkProof",
+    "inputs": [
+      { "name": "_proofHash", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "_calldataHash", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "execute",
+    "inputs": [
+      { "name": "_to", "type": "address", "internalType": "address" },
+      { "name": "_value", "type": "uint256", "internalType": "uint256" },
+      { "name": "_data", "type": "bytes", "internalType": "bytes" }
+    ],
+    "outputs": [
+      { "name": "returnData", "type": "bytes", "internalType": "bytes" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onlyCompliantEURC",
+    "inputs": [
+      { "name": "_to", "type": "address", "internalType": "address" },
+      { "name": "_amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "_proofHash", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setEurcToken",
+    "inputs": [
+      { "name": "_eurcToken", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "isProofRegistered",
+    "inputs": [
+      { "name": "_proofHash", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registeredProofs",
+    "inputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "eurcToken",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+      { "name": "newOwner", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ZkProofRegistered",
+    "inputs": [
+      { "name": "proofHash", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "calldataHash", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "timestamp", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransactionExecuted",
+    "inputs": [
+      { "name": "to", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "value", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "data", "type": "bytes", "indexed": false, "internalType": "bytes" },
+      { "name": "success", "type": "bool", "indexed": false, "internalType": "bool" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompliantTransfer",
+    "inputs": [
+      { "name": "token", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "to", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "proofHash", "type": "bytes32", "indexed": false, "internalType": "bytes32" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      { "name": "previousOwner", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "newOwner", "type": "address", "indexed": true, "internalType": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "receive",
+    "stateMutability": "payable"
+  }
+]
