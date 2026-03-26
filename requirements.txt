@@ -1,3 +1,2 @@
-# Requirements
-
-This file lists the dependencies needed to run the application.
+# AEGIS Protocol - Python Dependencies
+pydantic>=1.10,<3.0
