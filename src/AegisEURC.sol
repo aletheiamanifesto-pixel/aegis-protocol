@@ -9,8 +9,6 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Arrays.sol";
-
 import "./interfaces/IComplianceRegistry.sol";
 
 /**
@@ -64,7 +62,6 @@ contract AegisEURC is
     Pausable,
     ReentrancyGuard
 {
-    using Arrays for uint256[];
 
     // ─────────────────────────────────────────────────────────────────────
     // Roles
@@ -527,9 +524,7 @@ contract AegisEURC is
      *      Incrementa il contatore e emette l'evento Snapshot.
      */
     function _snapshot() internal returns (uint256) {
-        unchecked {
-            _currentSnapshotId++;
-        }
+        _currentSnapshotId++;
         uint256 currentId = _currentSnapshotId;
         emit Snapshot(currentId);
         return currentId;
@@ -570,13 +565,22 @@ contract AegisEURC is
 
     /**
      * @dev Cerca il valore associato a uno snapshot ID specifico.
-     *      Utilizza binary search (findUpperBound) per efficienza O(log n).
+     *      Utilizza binary search (lower bound) per efficienza O(log n).
+     *
+     *      Semantica: trova la prima entry con id >= snapshotId.
+     *        - Se ids[index] == snapshotId: il valore è il saldo registrato
+     *          prima del primo trasferimento dopo lo snapshot.
+     *        - Se ids[index] > snapshotId: nessun trasferimento è avvenuto
+     *          tra snapshotId e ids[index], quindi il saldo registrato è
+     *          anche il saldo corretto a snapshotId.
+     *        - Se non esiste alcun index: nessun trasferimento è avvenuto
+     *          dopo snapshotId, quindi il saldo corrente è corretto.
      *
      * @param snapshotId L'ID dello snapshot da cercare.
      * @param snapshots La struttura Snapshots in cui cercare.
-     * @return (found, value) - found è true se il valore è stato registrato
-     *         nello snapshot, value è il saldo al momento dello snapshot.
-     *         Se found è false, il chiamante deve usare il saldo corrente.
+     * @return (found, value) - found è true se il valore è stato trovato
+     *         nello storico snapshot. Se false, il chiamante deve usare
+     *         il saldo corrente.
      */
     function _valueAt(
         uint256 snapshotId,
@@ -586,18 +590,33 @@ contract AegisEURC is
         if (snapshotId > _currentSnapshotId)
             revert SnapshotIdNonexistent(snapshotId);
 
-        // Binary search nell'array ordinato degli snapshot ID.
-        // findUpperBound restituisce l'indice del primo elemento > snapshotId.
-        uint256 index = snapshots.ids.findUpperBound(snapshotId);
+        uint256 len = snapshots.ids.length;
+        if (len == 0) {
+            return (false, 0);
+        }
 
-        if (index == snapshots.ids.length) {
-            // Nessun snapshot registrato per questo account dopo snapshotId.
+        // Binary search: trova il primo indice dove ids[index] >= snapshotId
+        // (lower bound). Questo ci dà il primo snapshot registrato che copre
+        // il nostro target, poiché i valori sono registrati prima dei trasferimenti.
+        uint256 low = 0;
+        uint256 high = len;
+
+        while (low < high) {
+            uint256 mid = low + (high - low) / 2;
+            if (snapshots.ids[mid] < snapshotId) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        if (low == len) {
+            // Nessun snapshot registrato con id >= snapshotId.
             // Il saldo non è cambiato dallo snapshot → usa il saldo corrente.
             return (false, 0);
         } else {
-            // Trovato uno snapshot: il valore registrato è il saldo
-            // al momento in cui è avvenuto il primo trasferimento dopo lo snapshot.
-            return (true, snapshots.values[index]);
+            // Trovato: il valore registrato è il saldo corretto a snapshotId.
+            return (true, snapshots.values[low]);
         }
     }
 

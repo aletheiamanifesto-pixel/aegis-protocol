@@ -31,6 +31,10 @@ import "../src/AegisEURC.sol";
 contract DeployAegisEURC is Script {
     function run() external {
         // ── Leggi configurazione da variabili d'ambiente ────────────────
+        // ATTENZIONE: L'uso di chiavi private in variabili d'ambiente è
+        // accettabile SOLO per testnet/sviluppo. Per deploy in produzione,
+        // utilizzare l'integrazione hardware wallet di Foundry (--ledger)
+        // o i file keystore (--keystore) per proteggere le chiavi private.
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
