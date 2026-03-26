@@ -47,7 +47,11 @@ if PEDERSEN_H < 2:
     PEDERSEN_H = PEDERSEN_H + 2
 
 # MiMC constants
-MIMC_PRIME = (1 << 256) - (1 << 32) - (1 << 9) - (1 << 8) - (1 << 7) - (1 << 6) - (1 << 4) - 1  # secp256k1 field prime
+# secp256k1 field prime
+MIMC_PRIME = (
+    (1 << 256) - (1 << 32) - (1 << 9) - (1 << 8)
+    - (1 << 7) - (1 << 6) - (1 << 4) - 1
+)
 MIMC_ROUNDS = 220
 MIMC_ROUND_CONSTANTS: List[int] = []
 
@@ -237,8 +241,9 @@ def encrypt_metadata(viewing_key_hex: str, plaintext: bytes) -> bytes:
     """
     Encrypt metadata using a viewing key (XOR stream cipher via SHA-256 CTR).
 
-    This is a lightweight encryption suitable for metadata. For production,
-    use AES-GCM with the viewing key.
+    WARNING: This is a simplified reference implementation for development and
+    testing only. It does NOT provide authenticated encryption and MUST NOT be
+    used in production. Replace with AES-256-GCM for any deployed system.
 
     Args:
         viewing_key_hex: The viewing key as hex string.
@@ -359,7 +364,7 @@ class AegisMerkleTree:
             zero_val = self._zero_values[level]
 
             i = 0
-            while i < level_size or i < 1:
+            while i < max(level_size, 1):
                 left = current_level[i] if i < level_size else zero_val
                 right = current_level[i + 1] if (i + 1) < level_size else zero_val
                 parent = int(mimc_hash(left, right), 16)
@@ -406,7 +411,7 @@ class AegisMerkleTree:
             # Move to next level
             next_level: List[int] = []
             i = 0
-            while i < level_size or i < 1:
+            while i < max(level_size, 1):
                 left = current_level[i] if i < level_size else zero_val
                 right = current_level[i + 1] if (i + 1) < level_size else zero_val
                 parent = int(mimc_hash(left, right), 16)
