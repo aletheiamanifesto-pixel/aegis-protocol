@@ -114,6 +114,9 @@ def submit_compliant_transaction(
 
     nonce = w3.eth.get_transaction_count(account.address)
 
+    base_fee = w3.eth.get_block("latest").get("baseFeePerGas", w3.eth.gas_price)
+    max_priority = w3.to_wei(2, "gwei")
+
     tx = contract.functions.registerZkProof(
         proof_bytes,
         calldata_bytes,
@@ -123,8 +126,8 @@ def submit_compliant_transaction(
             "nonce": nonce,
             "chainId": CHAIN_ID,
             "gas": 200_000,
-            "maxFeePerGas": w3.eth.gas_price * 2,
-            "maxPriorityFeePerGas": w3.to_wei(2, "gwei"),
+            "maxFeePerGas": base_fee * 2 + max_priority,
+            "maxPriorityFeePerGas": max_priority,
         }
     )
 
@@ -159,6 +162,9 @@ def execute_transaction(
 
     nonce = w3.eth.get_transaction_count(account.address)
 
+    base_fee = w3.eth.get_block("latest").get("baseFeePerGas", w3.eth.gas_price)
+    max_priority = w3.to_wei(2, "gwei")
+
     tx = contract.functions.execute(
         Web3.to_checksum_address(to),
         value,
@@ -169,8 +175,8 @@ def execute_transaction(
             "nonce": nonce,
             "chainId": CHAIN_ID,
             "gas": 300_000,
-            "maxFeePerGas": w3.eth.gas_price * 2,
-            "maxPriorityFeePerGas": w3.to_wei(2, "gwei"),
+            "maxFeePerGas": base_fee * 2 + max_priority,
+            "maxPriorityFeePerGas": max_priority,
         }
     )
 

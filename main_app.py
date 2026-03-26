@@ -80,8 +80,9 @@ async def submit_transaction(req: TransactionRequest):
             detail="MiCA regulation: ZK proof hash required for amounts >= 1000 EUR.",
         )
 
-    # ── Derive calldata hash ─────────────────────────────────────────
-    calldata_payload = f"{req.sender}:{req.recipient}:{req.amount}:{now}"
+    # ── Derive calldata hash (use integer cents for determinism) ────
+    amount_cents = int(round(req.amount * 100))
+    calldata_payload = f"{req.sender}:{req.recipient}:{amount_cents}:{now}"
     calldata_hash = "0x" + hashlib.sha256(calldata_payload.encode()).hexdigest()
 
     # ── If proof hash supplied, register on-chain ────────────────────
