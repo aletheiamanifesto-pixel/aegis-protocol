@@ -10,11 +10,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from bundler.adaptive_velocity import VelocityTracker
+from bundler.config import BundlerConfig
+
 
 MICA_ZK_THRESHOLD_EUR: float = 1000.0
-MAX_TX_PER_MINUTE: int = 5
 MAX_DAILY_DEFAULT: float = 10_000.0
 MAX_SINGLE_DEFAULT: float = 5_000.0
+
+_velocity_tracker = VelocityTracker()
+_default_config = BundlerConfig()
 
 
 @dataclass
@@ -38,22 +43,6 @@ class ComplianceError(Exception):
     pass
 
 
-_velocity_store: Dict[str, List[float]] = {}
-
-
-def _record_tx(address: str) -> int:
-    now = time.time()
-    timestamps = _velocity_store.setdefault(address, [])
-    timestamps.append(now)
-    _velocity_store[address] = [t for t in timestamps if now - t <= 60]
-    return len(_velocity_store[address])
-
-
-def _tx_count_last_minute(address: str) -> int:
-    now = time.time()
-    return sum(1 for t in _velocity_store.get(address, []) if now - t <= 60)
-
-
 class ComplianceEngine:
     """Evaluate whether a transaction satisfies MiCA compliance rules."""
 
@@ -65,6 +54,7 @@ class ComplianceEngine:
         daily_spent: float = 0.0,
         daily_limit: float = MAX_DAILY_DEFAULT,
         single_tx_limit: float = MAX_SINGLE_DEFAULT,
+        op_type: str = "single_tx",
     ) -> ComplianceResult:
         flags: List[str] = []
 
@@ -96,12 +86,16 @@ class ComplianceEngine:
                 flags=flags,
             )
 
-        tx_count = _tx_count_last_minute(sender)
-        if tx_count >= MAX_TX_PER_MINUTE:
+        velocity_limit = _default_config.velocity_limits.get(op_type, 30)
+        if not _velocity_tracker.check(sender, op_type, velocity_limit):
             flags.append("VELOCITY_LIMIT_EXCEEDED")
+            tx_count = _velocity_tracker.get_count(sender, op_type)
             return ComplianceResult(
                 approved=False,
-                message=f"Velocity limit exceeded: {tx_count} transactions in last 60 seconds",
+                message=(
+                    f"Velocity limit exceeded for op_type={op_type}: "
+                    f"{tx_count} transactions in last 60 seconds"
+                ),
                 requires_zk_proof=False,
                 risk_level="high",
                 flags=flags,
@@ -119,7 +113,7 @@ class ComplianceEngine:
                     flags=flags,
                 )
 
-        _record_tx(sender)
+        _velocity_tracker.record(sender, op_type)
 
         return ComplianceResult(
             approved=True,

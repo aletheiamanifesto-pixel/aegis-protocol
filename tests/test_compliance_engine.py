@@ -8,10 +8,13 @@ from compliance_engine import (
     ComplianceResult,
     ZKProofStub,
     MICA_ZK_THRESHOLD_EUR,
-    MAX_TX_PER_MINUTE,
     MAX_DAILY_DEFAULT,
     MAX_SINGLE_DEFAULT,
+    _velocity_tracker,
 )
+from bundler.config import BundlerConfig
+
+_DEFAULT_SINGLE_TX_LIMIT = BundlerConfig().velocity_limits["single_tx"]
 
 
 @pytest.fixture
@@ -92,16 +95,16 @@ class TestComplianceEngine:
 
 class TestVelocityLimit:
     def test_velocity_limit_blocks_after_max(self, engine):
-        """Sending MAX_TX_PER_MINUTE transactions should trigger velocity limit on the next."""
+        """Sending _DEFAULT_SINGLE_TX_LIMIT transactions should trigger velocity limit on the next."""
         sender = "0xvelocity_test_unique_address_abc123"
-        # Use a fresh engine to avoid state from other tests
-        fresh_engine = ComplianceEngine()
+        # Reset any prior state for this address
+        _velocity_tracker.reset(sender)
 
-        for _ in range(MAX_TX_PER_MINUTE):
-            r = fresh_engine.check_transaction(sender, 1.0)
+        for _ in range(_DEFAULT_SINGLE_TX_LIMIT):
+            r = engine.check_transaction(sender, 1.0)
             assert r.approved
 
         # Next transaction should be blocked
-        blocked = fresh_engine.check_transaction(sender, 1.0)
+        blocked = engine.check_transaction(sender, 1.0)
         assert not blocked.approved
         assert "VELOCITY_LIMIT_EXCEEDED" in blocked.flags
