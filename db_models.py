@@ -133,3 +133,36 @@ class ScheduledPayment(Base):
     last_executed_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="scheduled_payments")
+
+
+# ============================================================================
+# VIEWING KEYS V2 DB MODELS
+# ============================================================================
+
+class ViewingKeyV2DB(Base):
+    __tablename__ = "viewing_keys_v2"
+
+    key_id = Column(String(36), primary_key=True, index=True)
+    address = Column(String(255), nullable=False, index=True)
+    scope = Column(String(30), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    parent_id = Column(String(36), nullable=True)
+    created_at = Column(Float, nullable=False)
+    expires_at = Column(Float, nullable=True)
+    max_uses = Column(Integer, nullable=True)
+    use_count = Column(Integer, nullable=False, default=0)
+    revoked_at = Column(Float, nullable=True)
+
+
+class RegulatoryEscrowDB(Base):
+    __tablename__ = "regulatory_escrows"
+
+    escrow_id = Column(String(36), primary_key=True, index=True)
+    tx_hash = Column(String(255), nullable=False, index=True)
+    ephemeral_public_hex = Column(Text, nullable=False)
+    ciphertext_hex = Column(Text, nullable=False)
+    nonce_hex = Column(String(64), nullable=False)
+    tag_hex = Column(String(64), nullable=False)
+    created_at = Column(Float, nullable=False)
+    decrypted_at = Column(Float, nullable=True)
+    legal_reference = Column(String(500), nullable=True)
