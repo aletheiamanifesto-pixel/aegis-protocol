@@ -339,3 +339,66 @@ class VerificationBadge(BaseModel):
                 "issuer": "AEGIS Protocol"
             }
         }
+
+# ============================================================================
+# VIEWING KEYS V2 MODELS
+# ============================================================================
+
+from viewing_keys.scope_filter import KeyScope, KeyStatus  # noqa: E402
+
+
+class ViewingKeyV2Create(BaseModel):
+    """Request body for creating a master viewing key."""
+    address: str = Field(..., description="Wallet address")
+
+
+class ViewingKeyV2Response(BaseModel):
+    """Response with key info (no secret exposed)."""
+    key_id: str
+    address: str
+    scope: str
+    status: str
+    parent_id: Optional[str] = None
+    children_ids: List[str] = Field(default_factory=list)
+    created_at: float
+    expires_at: Optional[float] = None
+    max_uses: Optional[int] = None
+    use_count: int = 0
+    revoked_at: Optional[float] = None
+
+
+class SubKeyDerive(BaseModel):
+    """Request body for deriving a sub-key from a master key."""
+    master_key_id: str = Field(..., description="ID of the parent master key")
+    scope: str = Field(..., description="KeyScope value")
+    context: str = Field(default="", description="HKDF derivation context")
+    expires_in: Optional[int] = Field(None, description="Seconds until expiry")
+    max_uses: Optional[int] = Field(None, description="Maximum decrypt uses")
+
+
+class DecryptRequest(BaseModel):
+    """Request body for decrypting a transaction."""
+    key_id: str = Field(..., description="Viewing key ID to use")
+    ciphertext: str = Field(..., description="Hex-encoded ciphertext")
+    nonce: str = Field(..., description="Hex-encoded nonce")
+    tag: str = Field(..., description="Hex-encoded authentication tag")
+
+
+class RegulatoryEscrowResponse(BaseModel):
+    """Response model for a regulatory escrow record."""
+    escrow_id: str
+    tx_hash: str
+    ephemeral_public_hex: str
+    ciphertext_hex: str
+    nonce_hex: str
+    tag_hex: str
+    created_at: float
+
+
+class BundleModel(BaseModel):
+    """Represents a bundled transaction set (PR #1 compatibility)."""
+    bundle_id: str = Field(..., description="Unique bundle identifier")
+    transactions: List[Dict[str, Any]] = Field(default_factory=list)
+    merkle_root: Optional[str] = Field(None)
+    created_at: Optional[float] = Field(None)
+    status: str = Field(default="pending")
