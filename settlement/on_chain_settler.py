@@ -144,8 +144,11 @@ class OnChainSettler:
             abi=_BUNDLE_VERIFIER_ABI,
         )
 
-        # Encode bundle_id as bytes32 and merkle_root as bytes32
-        bundle_id_bytes = bytes.fromhex(bundle.bundle_id.ljust(64, "0")[:64])
+        # Encode bundle_id as bytes32.
+        # bundle_id is expected to be a 64-character hex string (UUID hex, no 0x prefix).
+        # It is right-padded with zeros if shorter and truncated if longer.
+        raw_id = bundle_id if not bundle_id.startswith("0x") else bundle_id[2:]
+        bundle_id_bytes = bytes.fromhex(raw_id.ljust(64, "0")[:64])
         merkle_root_hex = bundle.merkle_root
         if merkle_root_hex.startswith("0x"):
             merkle_root_hex = merkle_root_hex[2:]

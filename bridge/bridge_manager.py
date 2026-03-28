@@ -189,7 +189,10 @@ class BridgeManager:
 
     def _simulate_bridge(self, request_id: str, request: BridgeRequest) -> BridgeResult:
         """Return a deterministic simulated bridge result (dev mode)."""
-        raw = f"{request_id}:{request.source_chain}:{request.dest_chain}:{request.amount}"
+        raw = (
+            f"{request_id}:{request.source_chain}:{request.dest_chain}:"
+            f"{request.amount}:{request.sender}:{request.recipient}:{request.token_address}"
+        )
         fake_src_hash = "0x" + hashlib.sha256(f"src:{raw}".encode()).hexdigest()
         fake_dst_hash = "0x" + hashlib.sha256(f"dst:{raw}".encode()).hexdigest()
         logger.info(

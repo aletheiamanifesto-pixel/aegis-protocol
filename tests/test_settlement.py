@@ -26,8 +26,11 @@ class _FakeBundle:
     status: str = "pending"
 
 
+_BUNDLE_ID_HEX_LENGTH = 64
+
+
 def _make_bundle(
-    bundle_id: str = "abc123" + "0" * 58,
+    bundle_id: str = "abc123" + "0" * (_BUNDLE_ID_HEX_LENGTH - len("abc123")),
     merkle_root: str = "0x" + "d" * 64,
     tx_count: int = 3,
 ) -> _FakeBundle:

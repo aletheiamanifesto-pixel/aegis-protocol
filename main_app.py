@@ -711,14 +711,22 @@ def settlement_submit_bundle(req: SubmitBundleRequest, current_user: Dict = Depe
     if not _settlement_available:
         raise HTTPException(status_code=503, detail="Settlement service not available")
 
-    # Build a minimal bundle-like object from the request fields
-    class _InlineBundle:
-        bundle_id = req.bundle_id
-        merkle_root = req.merkle_root
-        transactions = [{}] * req.tx_count
+    # Build a minimal bundle-like object from the request fields using a dataclass
+    # to avoid class-level attribute sharing under concurrent requests.
+    from dataclasses import make_dataclass
+
+    _BundleProxy = make_dataclass(
+        "_BundleProxy",
+        [("bundle_id", str), ("merkle_root", str), ("transactions", list)],
+    )
+    proxy = _BundleProxy(
+        bundle_id=req.bundle_id,
+        merkle_root=req.merkle_root,
+        transactions=[{}] * req.tx_count,
+    )
 
     settler = OnChainSettler()
-    result = settler.settle(_InlineBundle())
+    result = settler.settle(proxy)
     return {
         "bundle_id": result.bundle_id,
         "tx_hash": result.tx_hash,

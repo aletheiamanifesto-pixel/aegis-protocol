@@ -153,6 +153,8 @@ class ReserveAttestor:
         supply = supply_raw / scale
         net = deposited - withdrawn
 
+        # When total supply is zero there are no outstanding tokens to back,
+        # so the reserve is trivially sufficient — ratio is reported as 1.0.
         ratio = net / supply if supply > 0 else 1.0
 
         on_chain_data = {
