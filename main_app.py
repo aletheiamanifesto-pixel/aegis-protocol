@@ -87,6 +87,30 @@ except ImportError:
     def get_db():
         yield None
 
+try:
+    from settlement import OnChainSettler, SettlementConfig, SettlementResult
+    _settlement_available = True
+except ImportError:
+    _settlement_available = False
+
+try:
+    from oracle import ChainlinkPriceFeed, OracleConfig
+    _oracle_available = True
+except ImportError:
+    _oracle_available = False
+
+try:
+    from reporting import ESMAReporter, ReserveAttestor
+    _reporting_available = True
+except ImportError:
+    _reporting_available = False
+
+try:
+    from bridge import BridgeManager, BridgeRequest, BridgeConfig, BridgeError
+    _bridge_available = True
+except ImportError:
+    _bridge_available = False
+
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
@@ -245,6 +269,26 @@ class RecurringPaymentRequest(BaseModel):
     start_date: Optional[datetime] = None
 
 
+class SubmitBundleRequest(BaseModel):
+    bundle_id: str
+    merkle_root: str
+    tx_count: int = 0
+
+
+class ComplianceReportRequest(BaseModel):
+    period_start: datetime
+    period_end: datetime
+
+
+class BridgeInitiateRequest(BaseModel):
+    source_chain: str
+    dest_chain: str
+    token_address: str
+    amount: float
+    recipient: str
+    sender: str
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -261,6 +305,10 @@ def health():
             "wallet_service": _ws_available,
             "banking_operations": _bo_available,
             "viewing_keys": _vk_available,
+            "settlement": _settlement_available,
+            "oracle": _oracle_available,
+            "reporting": _reporting_available,
+            "bridge": _bridge_available,
         },
     }
 
@@ -651,3 +699,171 @@ def banking_reserve_status():
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
     return get_reserve_status()
+
+
+# ---------------------------------------------------------------------------
+# Settlement endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/settlement/submit-bundle")
+def settlement_submit_bundle(req: SubmitBundleRequest, current_user: Dict = Depends(_get_current_user)):
+    """Trigger on-chain settlement for a bundle identified by its Merkle root."""
+    if not _settlement_available:
+        raise HTTPException(status_code=503, detail="Settlement service not available")
+
+    # Build a minimal bundle-like object from the request fields using a dataclass
+    # to avoid class-level attribute sharing under concurrent requests.
+    from dataclasses import make_dataclass
+
+    _BundleProxy = make_dataclass(
+        "_BundleProxy",
+        [("bundle_id", str), ("merkle_root", str), ("transactions", list)],
+    )
+    proxy = _BundleProxy(
+        bundle_id=req.bundle_id,
+        merkle_root=req.merkle_root,
+        transactions=[{}] * req.tx_count,
+    )
+
+    settler = OnChainSettler()
+    result = settler.settle(proxy)
+    return {
+        "bundle_id": result.bundle_id,
+        "tx_hash": result.tx_hash,
+        "block_number": result.block_number,
+        "gas_used": result.gas_used,
+        "status": result.status,
+        "error": result.error,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Oracle endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/oracle/eur-usd")
+def oracle_eur_usd(current_user: Dict = Depends(_get_current_user)):
+    """Get the current EUR/USD price from the Chainlink price feed."""
+    if not _oracle_available:
+        raise HTTPException(status_code=503, detail="Oracle service not available")
+    feed = ChainlinkPriceFeed()
+    data = feed.get_eur_usd_price()
+    return {
+        "price": data.price,
+        "decimals": data.decimals,
+        "updated_at": data.updated_at,
+        "round_id": data.round_id,
+        "is_stale": data.is_stale,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reporting endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/reporting/compliance-report")
+def reporting_compliance_report(
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
+    current_user: Dict = Depends(_get_current_user),
+):
+    """Generate a MiCA compliance report for the given time period."""
+    if not _reporting_available:
+        raise HTTPException(status_code=503, detail="Reporting service not available")
+
+    now = datetime.utcnow()
+    try:
+        start = datetime.fromisoformat(period_start) if period_start else now - timedelta(days=30)
+        end = datetime.fromisoformat(period_end) if period_end else now
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {exc}")
+
+    reporter = ESMAReporter()
+    report = reporter.generate_report(start, end)
+    return {
+        "report_id": report.report_id,
+        "period_start": report.period_start,
+        "period_end": report.period_end,
+        "generated_at": report.generated_at,
+        "total_transactions": report.total_transactions,
+        "total_volume_eur": report.total_volume_eur,
+        "reserve_ratio": report.reserve_ratio,
+        "zk_proofs_generated": report.zk_proofs_generated,
+        "velocity_limit_breaches": report.velocity_limit_breaches,
+        "compliance_rejections": report.compliance_rejections,
+        "report_hash": report.report_hash,
+    }
+
+
+@app.get("/api/v1/reporting/reserve-attestation")
+def reporting_reserve_attestation(current_user: Dict = Depends(_get_current_user)):
+    """Get the current on-chain reserve attestation."""
+    if not _reporting_available:
+        raise HTTPException(status_code=503, detail="Reporting service not available")
+
+    attestor = ReserveAttestor()
+    attestation = attestor.attest()
+    return {
+        "ratio": attestation.ratio,
+        "is_fully_backed": attestation.is_fully_backed,
+        "on_chain_data": attestation.on_chain_data,
+        "timestamp": attestation.timestamp,
+        "attestation_hash": attestation.attestation_hash,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bridge endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/bridge/initiate")
+def bridge_initiate(req: BridgeInitiateRequest, current_user: Dict = Depends(_get_current_user)):
+    """Initiate a cross-chain bridge transfer."""
+    if not _bridge_available:
+        raise HTTPException(status_code=503, detail="Bridge service not available")
+
+    compliance_engine = None
+    if _ce_available:
+        compliance_engine = ComplianceEngine()
+
+    manager = BridgeManager(compliance_engine=compliance_engine)
+    bridge_req = BridgeRequest(
+        source_chain=req.source_chain,
+        dest_chain=req.dest_chain,
+        token_address=req.token_address,
+        amount=req.amount,
+        recipient=req.recipient,
+        sender=req.sender,
+    )
+    try:
+        result = manager.initiate_bridge(bridge_req)
+    except BridgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "request_id": result.request_id,
+        "status": result.status,
+        "source_tx_hash": result.source_tx_hash,
+        "dest_tx_hash": result.dest_tx_hash,
+        "estimated_time": result.estimated_time,
+        "error": result.error,
+    }
+
+
+@app.get("/api/v1/bridge/status/{request_id}")
+def bridge_status(request_id: str, current_user: Dict = Depends(_get_current_user)):
+    """Check the status of a pending bridge transfer."""
+    if not _bridge_available:
+        raise HTTPException(status_code=503, detail="Bridge service not available")
+
+    # NOTE: In a production deployment, the BridgeManager would be a long-lived
+    # singleton (e.g. stored in app.state) so request history is preserved.
+    # This stub returns a not-found response for unknown IDs since each request
+    # creates a fresh manager instance.
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"Bridge request '{request_id}' not found. "
+            "Use a persistent BridgeManager instance to query status."
+        ),
+    )
