@@ -45,6 +45,10 @@ contract AegisVault {
     event AuditReportSubmitted(bytes32 reportHash, uint256 timestamp);
     event SignerAdded(address indexed signer);
     event SignerRemoved(address indexed signer);
+    event Paused(address indexed by);
+    event Unpaused(address indexed by);
+
+    bool public paused;
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
@@ -53,6 +57,11 @@ contract AegisVault {
 
     modifier onlySigner() {
         require(signers[msg.sender], "Not a signer");
+        _;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "Contract paused");
         _;
     }
 
@@ -71,7 +80,7 @@ contract AegisVault {
         }
     }
 
-    function deposit(address user, uint256 amount, bytes32 txRef) external onlySigner {
+    function deposit(address user, uint256 amount, bytes32 txRef) external whenNotPaused onlySigner {
         require(user != address(0), "User zero");
         require(amount > 0, "Zero amount");
 
@@ -81,7 +90,7 @@ contract AegisVault {
         emit Deposited(user, amount, txRef);
     }
 
-    function withdraw(address user, uint256 amount, string calldata iban) external onlySigner {
+    function withdraw(address user, uint256 amount, string calldata iban) external whenNotPaused onlySigner {
         require(user != address(0), "User zero");
         require(amount > 0, "Zero amount");
         require(aegisEUR.balanceOf(user) >= amount, "Insufficient AEGIS EUR");
@@ -117,6 +126,16 @@ contract AegisVault {
 
     function getAuditReports() external view returns (bytes32[] memory) {
         return auditReports;
+    }
+
+    function pause() external onlyOwner {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 
     function addSigner(address signer) external onlyOwner {

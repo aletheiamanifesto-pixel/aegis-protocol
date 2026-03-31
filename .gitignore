@@ -101,3 +101,4 @@ logs/
 *.key
 *.p12
 *.pfx
+package-lock.json
