@@ -33,6 +33,15 @@ contract AegisBundleVerifier {
     // State
     // ─────────────────────────────────────────────
 
+    /// @notice Contract owner (set at construction).
+    address public owner;
+
+    /// @notice Addresses authorized to submit bundles.
+    mapping(address => bool) public authorizedSubmitters;
+
+    /// @notice Whether the contract is paused.
+    bool public paused;
+
     /// @notice Mapping from bundle ID to its on-chain record.
     mapping(bytes32 => Bundle) public bundles;
 
@@ -71,6 +80,11 @@ contract AegisBundleVerifier {
         bytes32 txHash
     );
 
+    event SubmitterAdded(address indexed submitter);
+    event SubmitterRemoved(address indexed submitter);
+    event Paused(address indexed by);
+    event Unpaused(address indexed by);
+
     // ─────────────────────────────────────────────
     // Errors
     // ─────────────────────────────────────────────
@@ -81,12 +95,68 @@ contract AegisBundleVerifier {
     error InvalidProofLength();
 
     // ─────────────────────────────────────────────
+    // Modifiers
+    // ─────────────────────────────────────────────
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    modifier onlyAuthorized() {
+        require(authorizedSubmitters[msg.sender], "Not authorized submitter");
+        _;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "Contract paused");
+        _;
+    }
+
+    // ─────────────────────────────────────────────
+    // Constructor
+    // ─────────────────────────────────────────────
+
+    constructor() {
+        owner = msg.sender;
+        authorizedSubmitters[msg.sender] = true;
+        emit SubmitterAdded(msg.sender);
+    }
+
+    // ─────────────────────────────────────────────
+    // Admin functions
+    // ─────────────────────────────────────────────
+
+    function addSubmitter(address submitter) external onlyOwner {
+        require(submitter != address(0), "Zero address");
+        require(!authorizedSubmitters[submitter], "Already authorized");
+        authorizedSubmitters[submitter] = true;
+        emit SubmitterAdded(submitter);
+    }
+
+    function removeSubmitter(address submitter) external onlyOwner {
+        authorizedSubmitters[submitter] = false;
+        emit SubmitterRemoved(submitter);
+    }
+
+    function pause() external onlyOwner {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    // ─────────────────────────────────────────────
     // External functions
     // ─────────────────────────────────────────────
 
     /**
      * @notice Register a new transaction bundle on-chain.
      * @dev Reverts if the bundle ID or Merkle root has already been submitted.
+     *      Only authorized submitters may call this function.
      * @param bundleId    Unique bundle identifier (bytes32).
      * @param merkleRoot  Merkle root computed off-chain.
      * @param txCount     Number of transactions in the bundle.
@@ -97,7 +167,7 @@ contract AegisBundleVerifier {
         bytes32 merkleRoot,
         uint256 txCount,
         uint256 totalAmount
-    ) external {
+    ) external whenNotPaused onlyAuthorized {
         if (bundles[bundleId].timestamp != 0) revert BundleAlreadyExists(bundleId);
         if (processedRoots[merkleRoot]) revert MerkleRootAlreadyProcessed(merkleRoot);
 

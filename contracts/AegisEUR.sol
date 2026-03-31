@@ -14,7 +14,7 @@ pragma solidity ^0.8.20;
  */
 
 interface INoirVerifier {
-    function verifyProof(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
+    function verifyProofView(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
 }
 
 contract AegisEUR {
@@ -38,6 +38,8 @@ contract AegisEUR {
 
     uint256 public constant MICA_ZK_THRESHOLD = 1000 * 10 ** 6;
 
+    bool public paused;
+
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event Mint(address indexed to, uint256 amount, address indexed minter);
@@ -49,6 +51,9 @@ contract AegisEUR {
     event MinterAdded(address indexed minter);
     event MinterRemoved(address indexed minter);
     event RegulatorAdded(address indexed regulator);
+    event RegulatorRemoved(address indexed regulator);
+    event Paused(address indexed by);
+    event Unpaused(address indexed by);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
@@ -67,6 +72,11 @@ contract AegisEUR {
 
     modifier notFrozen(address account) {
         require(!frozen[account], "Account frozen");
+        _;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "Contract paused");
         _;
     }
 
@@ -100,6 +110,7 @@ contract AegisEUR {
 
     function transfer(address to, uint256 amount)
         external
+        whenNotPaused
         notFrozen(msg.sender)
         notFrozen(to)
         returns (bool)
@@ -110,6 +121,7 @@ contract AegisEUR {
 
     function transferFrom(address from, address to, uint256 amount)
         external
+        whenNotPaused
         notFrozen(from)
         notFrozen(to)
         returns (bool)
@@ -120,7 +132,7 @@ contract AegisEUR {
         return true;
     }
 
-    function mint(address to, uint256 amount) external onlyMinter notFrozen(to) {
+    function mint(address to, uint256 amount) external whenNotPaused onlyMinter notFrozen(to) {
         require(to != address(0), "Mint to zero");
         require(amount > 0, "Zero amount");
         _balances[to] += amount;
@@ -129,7 +141,7 @@ contract AegisEUR {
         emit Mint(to, amount, msg.sender);
     }
 
-    function burn(address from, uint256 amount) external onlyMinter {
+    function burn(address from, uint256 amount) external whenNotPaused onlyMinter {
         require(_balances[from] >= amount, "Insufficient balance");
         _balances[from] -= amount;
         _totalSupply -= amount;
@@ -141,7 +153,7 @@ contract AegisEUR {
         address to,
         uint256 amount,
         bytes calldata proof
-    ) external notFrozen(msg.sender) notFrozen(to) {
+    ) external whenNotPaused notFrozen(msg.sender) notFrozen(to) {
         bytes32 proofHash = keccak256(proof);
         require(!usedProofHashes[proofHash], "Proof already used");
 
@@ -149,7 +161,7 @@ contract AegisEUR {
             bytes32[] memory publicInputs = new bytes32[](2);
             publicInputs[0] = bytes32(uint256(uint160(msg.sender)));
             publicInputs[1] = bytes32(amount);
-            require(verifier.verifyProof(proof, publicInputs), "Invalid ZK proof");
+            require(verifier.verifyProofView(proof, publicInputs), "Invalid ZK proof");
         }
 
         usedProofHashes[proofHash] = true;
@@ -189,6 +201,23 @@ contract AegisEUR {
     function addRegulator(address regulator) external onlyOwner {
         regulators[regulator] = true;
         emit RegulatorAdded(regulator);
+    }
+
+    function removeRegulator(address regulator) external onlyOwner {
+        regulators[regulator] = false;
+        emit RegulatorRemoved(regulator);
+    }
+
+    function pause() external {
+        require(msg.sender == owner || regulators[msg.sender], "Not authorized");
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external {
+        require(msg.sender == owner || regulators[msg.sender], "Not authorized");
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 
     function setVerifier(address _verifier) external onlyOwner {
