@@ -426,7 +426,23 @@ def transactions_send(req: SendTransactionRequest, current_user: Dict = Depends(
 
     if _ce_available:
         engine = ComplianceEngine()
-        result = engine.check_transaction(req.from_address, req.amount)
+        kyc_verified = False
+        daily_limit = 10000.0
+        single_tx_limit = 5000.0
+        if _db_available and db is not None:
+            profile = db.query(db_models.ComplianceProfile).filter(
+                db_models.ComplianceProfile.user_id == int(current_user["user_id"])
+            ).first()
+            if profile:
+                kyc_verified = profile.kyc_verified
+                daily_limit = profile.daily_limit
+                single_tx_limit = profile.single_tx_limit
+        result = engine.check_transaction(
+            req.from_address, req.amount,
+            kyc_verified=kyc_verified,
+            daily_limit=daily_limit,
+            single_tx_limit=single_tx_limit,
+        )
         if not result.approved:
             raise HTTPException(status_code=400, detail=result.message)
 

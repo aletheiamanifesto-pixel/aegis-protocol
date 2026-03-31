@@ -13,7 +13,7 @@ Definisce tutti i modelli di dati per:
 from enum import Enum
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ============================================================================
@@ -79,11 +79,12 @@ class EuroDigitalTransaction(BaseModel):
 class TransactionBatch(BaseModel):
     """Batch di transazioni per processing"""
     
-    transactions: List[EuroDigitalTransaction] = Field(..., min_items=1)
+    transactions: List[EuroDigitalTransaction] = Field(..., min_length=1)
     batch_id: str = Field(default_factory=lambda: str(__import__('uuid').uuid4()))
     created_at: datetime = Field(default_factory=datetime.now)
-    
-    @validator('transactions')
+
+    @field_validator('transactions')
+    @classmethod
     def validate_batch_size(cls, v):
         if len(v) > 1000:
             raise ValueError("Batch size exceeded (max 1000 transactions)")
@@ -112,10 +113,11 @@ class ZKProof(BaseModel):
     timestamp: int = Field(..., description="Timestamp della generazione")
     valid_until: int = Field(..., description="Timestamp di scadenza")
     
-    @validator('valid_until')
-    def validate_expiry(cls, v, values):
-        if 'timestamp' in values:
-            if v <= values['timestamp']:
+    @field_validator('valid_until')
+    @classmethod
+    def validate_expiry(cls, v, info):
+        if 'timestamp' in (info.data if hasattr(info, 'data') else {}):
+            if v <= info.data['timestamp']:
                 raise ValueError("valid_until must be after timestamp")
         return v
 
@@ -132,12 +134,14 @@ class CreditWorthinessCertificate(BaseModel):
     issuer: str = Field(..., description="Chi ha emesso il certificato (es: smart contract)")
     active: bool = Field(default=True)
     
-    @validator('expires_at')
-    def validate_expiry_date(cls, v, values):
-        if 'issued_at' in values:
-            if v <= values['issued_at']:
+    @field_validator('expires_at')
+    @classmethod
+    def validate_expiry_date(cls, v, info):
+        data = info.data if hasattr(info, 'data') else {}
+        if 'issued_at' in data:
+            if v <= data['issued_at']:
                 raise ValueError("expires_at must be after issued_at")
-            max_duration = values['issued_at'] + timedelta(days=365)
+            max_duration = data['issued_at'] + timedelta(days=365)
             if v > max_duration:
                 raise ValueError("Certificate validity cannot exceed 1 year")
         return v
@@ -168,7 +172,8 @@ class ViewingKeyRequest(BaseModel):
     reason: str = Field(..., description="Motivo della richiesta")
     required_merit: Optional[float] = Field(None, description="Se richiede selective disclosure")
     
-    @validator('requester_type')
+    @field_validator('requester_type')
+    @classmethod
     def validate_requester_type(cls, v):
         valid_types = ['bank', 'tax_authority', 'aml', 'credit_agency', 'other']
         if v not in valid_types:
@@ -189,12 +194,11 @@ class ViewingKeyPermission(BaseModel):
     active: bool = Field(default=True)
     revoked_at: Optional[datetime] = Field(None)
     
-    @root_validator
-    def check_expiry_after_grant(cls, values):
-        if 'granted_at' in values and 'expires_at' in values:
-            if values['expires_at'] <= values['granted_at']:
-                raise ValueError("expires_at must be after granted_at")
-        return values
+    @model_validator(mode='after')
+    def check_expiry_after_grant(self):
+        if self.expires_at <= self.granted_at:
+            raise ValueError("expires_at must be after granted_at")
+        return self
     
     class Config:
         json_schema_extra = {
@@ -236,10 +240,12 @@ class ComplianceRule(BaseModel):
     effective_until: Optional[datetime] = Field(None)
     active: bool = Field(default=True)
     
-    @validator('effective_until')
-    def validate_effective_period(cls, v, values):
-        if 'effective_from' in values and v:
-            if v <= values['effective_from']:
+    @field_validator('effective_until')
+    @classmethod
+    def validate_effective_period(cls, v, info):
+        data = info.data if hasattr(info, 'data') else {}
+        if 'effective_from' in data and v:
+            if v <= data['effective_from']:
                 raise ValueError("effective_until must be after effective_from")
         return v
 

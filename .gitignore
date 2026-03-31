@@ -82,6 +82,10 @@ cache/
 typechain-types/
 out/
 
+# Node.js (Hardhat)
+node_modules/
+deployed_addresses.json
+
 # Alembic
 alembic.ini
 
