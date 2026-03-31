@@ -13,7 +13,7 @@ async function main() {
   );
 
   // 1. Deploy NoirVerifier in dev mode
-  console.log("\n[1/4] Deploying NoirVerifier (dev mode)...");
+  console.log("\n[1/5] Deploying NoirVerifier (dev mode)...");
   const NoirVerifier = await ethers.getContractFactory("NoirVerifier");
   const verifier = await NoirVerifier.deploy(true);
   await verifier.waitForDeployment();
@@ -22,7 +22,7 @@ async function main() {
 
   // 2. Deploy AegisEUR — temporarily use deployer as vault placeholder
   const vaultPlaceholder = deployer.address;
-  console.log("\n[2/4] Deploying AegisEUR...");
+  console.log("\n[2/5] Deploying AegisEUR...");
   const AegisEUR = await ethers.getContractFactory("AegisEUR");
   const aegisEUR = await AegisEUR.deploy(vaultPlaceholder, deployer.address);
   await aegisEUR.waitForDeployment();
@@ -30,7 +30,7 @@ async function main() {
   console.log("AegisEUR deployed to:", aegisEURAddress);
 
   // 3. Deploy AegisVault linked to AegisEUR
-  console.log("\n[3/4] Deploying AegisVault...");
+  console.log("\n[3/5] Deploying AegisVault...");
   const AegisVault = await ethers.getContractFactory("AegisVault");
   const vault = await AegisVault.deploy(aegisEURAddress, [deployer.address], 1);
   await vault.waitForDeployment();
@@ -38,7 +38,7 @@ async function main() {
   console.log("AegisVault deployed to:", vaultAddress);
 
   // 4. Link AegisEUR to the real vault and verifier
-  console.log("\n[4/4] Linking contracts...");
+  console.log("\n[4/5] Linking contracts...");
   const setVaultTx = await aegisEUR.setVault(vaultAddress);
   await setVaultTx.wait();
   console.log("AegisEUR.setVault() done:", vaultAddress);

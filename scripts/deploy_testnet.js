@@ -93,7 +93,7 @@ async function main() {
 
   await verify(verifierAddress, [true]);
   await verify(aegisEURAddress, [vaultPlaceholder, deployer.address]);
-  await verify(vaultAddress, [[deployer.address], 1]);
+  await verify(vaultAddress, [aegisEURAddress, [deployer.address], 1]);
   await verify(bundleVerifierAddress, []);
 
   console.log("\nAll contracts deployed and verified.");
