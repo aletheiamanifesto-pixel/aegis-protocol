@@ -1,0 +1,18 @@
+{
+  "name": "aegis-protocol",
+  "version": "0.1.0",
+  "description": "AEGIS Protocol — MiCA-compliant EUR stablecoin smart contracts",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network amoy",
+    "deploy:sepolia": "hardhat run scripts/deploy_testnet.js --network sepolia",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost"
+  },
+  "devDependencies": {
+    "hardhat": "^2.22.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5"
+  }
+}

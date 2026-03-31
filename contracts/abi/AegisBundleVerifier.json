@@ -1,0 +1,90 @@
+[
+  {
+    "type": "constructor",
+    "inputs": []
+  },
+  {
+    "name": "submitBundle",
+    "type": "function",
+    "inputs": [
+      {"name": "bundleId", "type": "bytes32"},
+      {"name": "merkleRoot", "type": "bytes32"},
+      {"name": "txCount", "type": "uint256"},
+      {"name": "totalAmount", "type": "uint256"}
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "name": "verifyTransaction",
+    "type": "function",
+    "inputs": [
+      {"name": "bundleId", "type": "bytes32"},
+      {"name": "txLeaf", "type": "bytes32"},
+      {"name": "proof", "type": "bytes32[]"},
+      {"name": "proofPositions", "type": "bool[]"}
+    ],
+    "outputs": [{"name": "valid", "type": "bool"}],
+    "stateMutability": "view"
+  },
+  {
+    "name": "bundles",
+    "type": "function",
+    "inputs": [{"name": "bundleId", "type": "bytes32"}],
+    "outputs": [
+      {"name": "merkleRoot", "type": "bytes32"},
+      {"name": "txCount", "type": "uint256"},
+      {"name": "totalAmount", "type": "uint256"},
+      {"name": "timestamp", "type": "uint256"},
+      {"name": "submitter", "type": "address"}
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "name": "processedRoots",
+    "type": "function",
+    "inputs": [{"name": "merkleRoot", "type": "bytes32"}],
+    "outputs": [{"name": "", "type": "bool"}],
+    "stateMutability": "view"
+  },
+  {
+    "name": "BundleSubmitted",
+    "type": "event",
+    "inputs": [
+      {"name": "bundleId", "type": "bytes32", "indexed": true},
+      {"name": "merkleRoot", "type": "bytes32", "indexed": false},
+      {"name": "txCount", "type": "uint256", "indexed": false},
+      {"name": "totalAmount", "type": "uint256", "indexed": false},
+      {"name": "submitter", "type": "address", "indexed": true}
+    ]
+  },
+  {
+    "name": "TransactionVerified",
+    "type": "event",
+    "inputs": [
+      {"name": "bundleId", "type": "bytes32", "indexed": true},
+      {"name": "txIndex", "type": "uint256", "indexed": false},
+      {"name": "txHash", "type": "bytes32", "indexed": false}
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BundleAlreadyExists",
+    "inputs": [{"name": "bundleId", "type": "bytes32"}]
+  },
+  {
+    "type": "error",
+    "name": "MerkleRootAlreadyProcessed",
+    "inputs": [{"name": "merkleRoot", "type": "bytes32"}]
+  },
+  {
+    "type": "error",
+    "name": "BundleNotFound",
+    "inputs": [{"name": "bundleId", "type": "bytes32"}]
+  },
+  {
+    "type": "error",
+    "name": "InvalidProofLength",
+    "inputs": []
+  }
+]

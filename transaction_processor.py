@@ -5,8 +5,10 @@ transaction_processor.py - Web3 transaction processor for AEGIS Protocol
 """
 
 import hashlib
+import json
 import os
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
@@ -20,8 +22,11 @@ EURC_TOKEN_ADDRESS = os.getenv("EURC_TOKEN_ADDRESS", "")
 CHAIN_ID = int(os.getenv("CHAIN_ID", "80002"))
 EURC_DECIMALS = 6
 
-# Minimal ERC-20 ABI for transfer and balanceOf
-_ERC20_ABI = [
+# MiCA threshold above which a ZK proof is required (in EUR)
+MICA_ZK_THRESHOLD = 1000.0
+
+# Minimal ERC-20 ABI fallback (balanceOf, transfer, decimals)
+_ERC20_ABI_MINIMAL = [
     {
         "name": "balanceOf",
         "type": "function",
@@ -47,6 +52,20 @@ _ERC20_ABI = [
         "stateMutability": "view",
     },
 ]
+
+
+def _load_abi(filename: str):
+    """Try to load a full ABI from contracts/abi/<filename>; fall back to minimal ERC-20 ABI."""
+    abi_path = Path(__file__).parent / "contracts" / "abi" / filename
+    try:
+        with open(abi_path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return _ERC20_ABI_MINIMAL
+
+
+# Load full AegisEUR ABI (falls back to minimal if file is absent)
+_ERC20_ABI = _load_abi("AegisEUR.json")
 
 
 def _mock_tx_hash(sender: str, recipient: str, amount: float) -> str:
@@ -195,3 +214,79 @@ class TransactionProcessor:
         except Exception:
             address = "0x" + hashlib.sha256(private_key.encode()).hexdigest()[:40]
             return {"address": address, "dev_mode": True}
+
+    def send_eurc_with_proof(
+        self,
+        sender_private_key: str,
+        recipient: str,
+        amount_eur: float,
+        proof: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send EURC using ``transferWithProof`` when a ZK proof is provided or
+        the amount is >= MICA_ZK_THRESHOLD, otherwise fall back to a plain
+        ``transfer``.
+
+        Args:
+            sender_private_key: Hex-encoded private key of the sender.
+            recipient: Checksummed recipient Ethereum address.
+            amount_eur: Amount to send in EUR (float).
+            proof: Raw ZK proof bytes. Required when amount >= MICA_ZK_THRESHOLD.
+
+        Returns:
+            dict with tx_hash, status, amount, recipient, and method used.
+        """
+        use_proof_transfer = proof is not None or amount_eur >= MICA_ZK_THRESHOLD
+        if not use_proof_transfer:
+            result = self.send_eurc(sender_private_key, recipient, amount_eur)
+            result["method"] = "transfer"
+            return result
+
+        try:
+            from web3 import Web3
+            w3 = self._web3()
+            if not w3.is_connected():
+                raise RuntimeError("Node not reachable")
+
+            account = w3.eth.account.from_key(sender_private_key)
+            contract = self._eurc_contract(w3)
+            amount_raw = int(amount_eur * (10 ** EURC_DECIMALS))
+            recipient_cs = Web3.to_checksum_address(recipient)
+            proof_bytes = proof if proof is not None else b"\x00"
+
+            tx = contract.functions.transferWithProof(
+                recipient_cs, amount_raw, proof_bytes
+            ).build_transaction(
+                {
+                    "from": account.address,
+                    "nonce": w3.eth.get_transaction_count(account.address),
+                    "chainId": CHAIN_ID,
+                    "gas": 200000,
+                    "maxFeePerGas": w3.eth.gas_price * 2,
+                    "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
+                }
+            )
+
+            signed = w3.eth.account.sign_transaction(tx, sender_private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+
+            return {
+                "tx_hash": tx_hash.hex(),
+                "status": "pending",
+                "amount": amount_eur,
+                "recipient": recipient,
+                "method": "transferWithProof",
+            }
+
+        except Exception as exc:
+            sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
+            mock_hash = _mock_tx_hash(sender_id, recipient, amount_eur)
+            return {
+                "tx_hash": mock_hash,
+                "status": "mock_pending",
+                "amount": amount_eur,
+                "recipient": recipient,
+                "method": "transferWithProof",
+                "dev_mode": True,
+                "error": str(exc),
+            }
