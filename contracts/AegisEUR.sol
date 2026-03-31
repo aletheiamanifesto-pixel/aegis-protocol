@@ -14,7 +14,7 @@ pragma solidity ^0.8.20;
  */
 
 interface INoirVerifier {
-    function verifyProof(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
+    function verifyProof(bytes calldata proof, bytes32[] calldata publicInputs) external returns (bool);
 }
 
 contract AegisEUR {
