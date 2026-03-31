@@ -14,7 +14,7 @@ pragma solidity ^0.8.20;
  */
 
 interface INoirVerifier {
-    function verifyProofView(bytes calldata proof, bytes32[] calldata publicInputs) external view returns (bool);
+    function verifyProof(bytes calldata proof, bytes32[] calldata publicInputs) external returns (bool);
 }
 
 contract AegisEUR {
@@ -161,7 +161,7 @@ contract AegisEUR {
             bytes32[] memory publicInputs = new bytes32[](2);
             publicInputs[0] = bytes32(uint256(uint160(msg.sender)));
             publicInputs[1] = bytes32(amount);
-            require(verifier.verifyProofView(proof, publicInputs), "Invalid ZK proof");
+            require(verifier.verifyProof(proof, publicInputs), "Invalid ZK proof");
         }
 
         usedProofHashes[proofHash] = true;
