@@ -2,8 +2,9 @@
 
 > Math-based decentralized bank: EUR-backed stablecoin with ZK privacy, MiCA compliance, and on-chain reserve proofs.
 
-[![Tests](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/python-app.yml/badge.svg)](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/python-app.yml)
+[![Tests](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/test.yml/badge.svg)](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Security](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/security.yml/badge.svg)](https://github.com/aletheiamanifesto-pixel/aegis-protocol/actions/workflows/security.yml)
 
 ---
 
