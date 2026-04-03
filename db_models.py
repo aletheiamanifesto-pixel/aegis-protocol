@@ -154,6 +154,28 @@ class ViewingKeyV2DB(Base):
     revoked_at = Column(Float, nullable=True)
 
 
+class RegulatoryAccessRequestDB(Base):
+    __tablename__ = "regulatory_access_requests"
+
+    request_id = Column(String(36), primary_key=True, index=True)
+    requester_id = Column(String(255), nullable=False, index=True)
+    requester_type = Column(String(50), nullable=False)
+    owner_address = Column(String(42), nullable=False, index=True)
+    tx_hash = Column(String(66), nullable=False, index=True)
+    scope_requested = Column(String(30), nullable=False)
+    duration_days_requested = Column(Integer, nullable=False)
+    legal_reference = Column(String(500), nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False, default="pending_user_approval")
+    scope_granted = Column(String(30), nullable=True)
+    duration_days_granted = Column(Integer, nullable=True)
+    viewing_key_id = Column(String(36), nullable=True)
+    denied_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    responded_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+
+
 class RegulatoryEscrowDB(Base):
     __tablename__ = "regulatory_escrows"
 

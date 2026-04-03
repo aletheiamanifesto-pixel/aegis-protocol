@@ -403,6 +403,28 @@ class ViewingKeyManagerV2:
         }
         self._audit_trail.append(entry)
 
+    def has_master_key(self, address: str) -> bool:
+        """Return True if the address already has an active master key."""
+        return address in self._master_keys
+
+    def get_master_key_id(self, address: str) -> Optional[str]:
+        """Return the master key_id for an address, or None if not present."""
+        return self._master_keys.get(address)
+
+    def ensure_master_key(self, address: str) -> str:
+        """Return the existing master key_id, creating one if none exists.
+
+        Args:
+            address: Wallet address.
+
+        Returns:
+            The master key_id for the address.
+        """
+        if address not in self._master_keys:
+            result = self.create_master_key(address)
+            return result["key_id"]
+        return self._master_keys[address]
+
     def _find_master(self, record: "ViewingKeyRecord") -> Optional["ViewingKeyRecord"]:
         """Walk up the parent chain to find the root master key record."""
         current = record

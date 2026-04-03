@@ -119,3 +119,51 @@ class BridgeInitiateRequest(BaseModel):
     amount: float
     recipient: str
     sender: str
+
+
+# ---------------------------------------------------------------------------
+# Viewing Keys V2
+# ---------------------------------------------------------------------------
+
+class ViewingKeyV2CreateRequest(BaseModel):
+    address: str
+
+
+class ViewingKeyV2DeriveRequest(BaseModel):
+    master_key_id: str
+    scope: str = "balance_only"
+    context: str = ""
+    expires_in: Optional[int] = None  # seconds
+    max_uses: Optional[int] = None
+
+
+class ViewingKeyV2DecryptRequest(BaseModel):
+    ciphertext: str
+    nonce: str
+    tag: str
+
+
+# ---------------------------------------------------------------------------
+# Regulatory Access Flow
+# ---------------------------------------------------------------------------
+
+class RegulatoryRequestCreate(BaseModel):
+    requester_id: str
+    requester_type: str  # "uif", "guardia_finanza", "esma", "tax_authority", "aml_authority"
+    owner_address: str
+    tx_hash: str
+    scope: str = "single_tx"
+    duration_days: int = 30
+    legal_reference: str  # mandatory, e.g. "Decreto 231/2007 Art. 35"
+    reason: str
+
+
+class RegulatoryRequestApprove(BaseModel):
+    owner_address: str
+    scope: str           # scope actually granted
+    duration_days: int   # duration actually granted
+
+
+class RegulatoryRequestDeny(BaseModel):
+    owner_address: str
+    reason: str = ""
