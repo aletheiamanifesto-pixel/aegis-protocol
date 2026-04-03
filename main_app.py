@@ -65,6 +65,7 @@ from routers.reporting import router as reporting_router
 from routers.settlement import router as settlement_router
 from routers.transactions import router as transactions_router
 from routers.viewing_keys import router as viewing_keys_router
+from routers.viewing_keys_v2 import router as viewing_keys_v2_router
 from routers.wallet import router as wallet_router
 
 app.include_router(auth_router)
@@ -73,6 +74,7 @@ app.include_router(transactions_router)
 app.include_router(compliance_router)
 app.include_router(proof_router)
 app.include_router(viewing_keys_router)
+app.include_router(viewing_keys_v2_router)
 app.include_router(banking_router)
 app.include_router(settlement_router)
 app.include_router(oracle_router)
@@ -94,6 +96,7 @@ def health():
     from routers.settlement import _settlement_available
     from routers.transactions import _tp_available
     from routers.viewing_keys import _vk_available
+    from routers.viewing_keys_v2 import _vk_v2_available
     from routers.wallet import _ws_available
 
     return {
@@ -106,6 +109,7 @@ def health():
             "wallet_service": _ws_available,
             "banking_operations": _bo_available,
             "viewing_keys": _vk_available,
+            "viewing_keys_v2": _vk_v2_available,
             "settlement": _settlement_available,
             "oracle": _oracle_available,
             "reporting": _reporting_available,
