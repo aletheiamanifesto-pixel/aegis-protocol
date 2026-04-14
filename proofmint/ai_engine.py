@@ -9,6 +9,26 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 logger = logging.getLogger(__name__)
 
+ESPR_REQUIRED_FIELDS = {
+    "identity": ["productId", "productName", "category", "model_variant"],
+    "operator": ["brand_name", "operator_type"],
+    "materials": ["materials"],
+    "environmental": ["carbon_footprint_kg"],
+    "circularity": ["recycling_instructions", "recyclability_percent"],
+    "conformity": ["certifications"],
+    "origin": ["origin_country"],
+}
+
+ESPR_RECOMMENDED_FIELDS = {
+    "identity": ["product_image_url", "hs_code"],
+    "operator": ["operator_address", "facility_id"],
+    "materials": ["materials_detailed", "hazardous_substances"],
+    "environmental": ["carbon_footprint_method", "energy_consumption_kwh"],
+    "durability": ["expected_lifetime_years", "warranty_duration_months", "repair_score"],
+    "circularity": ["recycled_content_percent", "disassembly_instructions", "reuse_potential"],
+    "conformity": ["ce_marking", "reach_compliant", "conformity_declaration_url"],
+}
+
 
 def auto_fill_dpp(document_text: str) -> dict:
     if not document_text.strip() or not OPENAI_API_KEY:
@@ -16,8 +36,12 @@ def auto_fill_dpp(document_text: str) -> dict:
 
     prompt = (
         "Extract Digital Product Passport fields as JSON with keys: "
-        "productName, category, materials (array), origin_country, "
-        "carbon_footprint_kg, certifications (array), recycling_instructions, brand_name. "
+        "productId, productName, category, materials (array), materials_detailed (array of objects with name, weight_percent, recycled_content_percent, origin_country), "
+        "origin_country, brand_name, model_variant, product_image_url, operator_type, operator_address, facility_id, eori_number, "
+        "hazardous_substances (array), reach_compliant, rohs_compliant, carbon_footprint_kg, carbon_footprint_method, energy_consumption_kwh, "
+        "water_consumption_liters, expected_lifetime_years, repair_score, spare_parts_available, warranty_duration_months, warranty_terms, maintenance_instructions, "
+        "recyclability_percent, recycled_content_percent, disassembly_instructions, collection_points_url, reuse_potential, "
+        "certifications (array), ce_marking, conformity_declaration_url, test_reports_urls (array), hs_code, cn_code, recycling_instructions. "
         "If unknown, use null or empty arrays. Return JSON only."
     )
 
@@ -47,7 +71,7 @@ def auto_fill_dpp(document_text: str) -> dict:
         return {}
 
 
-def estimate_carbon_footprint(materials: list, origin: str, weight_kg: float) -> float:
+def estimate_carbon_footprint(materials: list, origin: str, weight_kg: float, materials_detailed: list | None = None) -> float:
     material_factors = {
         "cotton": 5.0,
         "polyester": 9.5,
@@ -57,7 +81,24 @@ def estimate_carbon_footprint(materials: list, origin: str, weight_kg: float) ->
         "plastic": 6.0,
     }
     avg_factor = 4.0
-    if materials:
+    detailed = materials_detailed or []
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for material in detailed:
+        if isinstance(material, dict):
+            name = str(material.get("name", "")).lower()
+            weight_percent = material.get("weight_percent")
+        else:
+            name = str(getattr(material, "name", "")).lower()
+            weight_percent = getattr(material, "weight_percent", None)
+        factor = material_factors.get(name, avg_factor)
+        if isinstance(weight_percent, (int, float)) and weight_percent > 0:
+            weighted_sum += factor * float(weight_percent)
+            weight_total += float(weight_percent)
+
+    if weight_total > 0:
+        avg_factor = weighted_sum / weight_total
+    elif materials:
         factors = [material_factors.get(str(m).lower(), avg_factor) for m in materials]
         avg_factor = sum(factors) / len(factors)
 
@@ -67,25 +108,60 @@ def estimate_carbon_footprint(materials: list, origin: str, weight_kg: float) ->
 
 
 def validate_compliance(dpp_data: dict) -> dict:
-    required_fields = [
-        "productId",
-        "productName",
-        "category",
-        "materials",
-        "origin_country",
-        "brand_name",
-    ]
+    def _is_missing(value) -> bool:
+        return value is None or value == "" or value == []
 
-    missing_fields = []
-    for field in required_fields:
-        value = dpp_data.get(field)
-        if value is None or value == "" or value == []:
-            missing_fields.append(field)
+    required_missing = []
+    recommended_missing = []
+    categories: dict[str, dict] = {}
 
-    score = int(((len(required_fields) - len(missing_fields)) / len(required_fields)) * 100)
+    all_categories = list(dict.fromkeys(list(ESPR_REQUIRED_FIELDS.keys()) + list(ESPR_RECOMMENDED_FIELDS.keys())))
+    for category in all_categories:
+        req_fields = ESPR_REQUIRED_FIELDS.get(category, [])
+        rec_fields = ESPR_RECOMMENDED_FIELDS.get(category, [])
+
+        category_missing = []
+        for field in req_fields:
+            if _is_missing(dpp_data.get(field)):
+                required_missing.append(field)
+                category_missing.append(field)
+        for field in rec_fields:
+            if _is_missing(dpp_data.get(field)):
+                recommended_missing.append(field)
+                category_missing.append(field)
+
+        present_req = len(req_fields) - sum(1 for f in req_fields if _is_missing(dpp_data.get(f)))
+        present_rec = len(rec_fields) - sum(1 for f in rec_fields if _is_missing(dpp_data.get(f)))
+        cat_total = len(req_fields) + len(rec_fields)
+        cat_score = 100 if cat_total == 0 else int(round(((present_req + present_rec) / cat_total) * 100))
+        categories[category] = {"score": cat_score, "missing": category_missing}
+
+    total_required = sum(len(v) for v in ESPR_REQUIRED_FIELDS.values())
+    total_recommended = sum(len(v) for v in ESPR_RECOMMENDED_FIELDS.values())
+    present_required = total_required - len(required_missing)
+    present_recommended = total_recommended - len(recommended_missing)
+
+    mandatory_score = 0 if total_required == 0 else (present_required / total_required) * 85
+    bonus_score = 0 if total_recommended == 0 else (present_recommended / total_recommended) * 15
+    score = int(round(min(100, max(0, mandatory_score + bonus_score))))
+
+    if score < 50:
+        compliance_level = "critical"
+    elif score < 70:
+        compliance_level = "low"
+    elif score < 85:
+        compliance_level = "medium"
+    elif score < 95:
+        compliance_level = "high"
+    else:
+        compliance_level = "full"
 
     return {
         "compliance_score": score,
-        "missing_fields": missing_fields,
-        "is_compliant": len(missing_fields) == 0,
+        "compliance_level": compliance_level,
+        "missing_fields": required_missing,
+        "required_missing": required_missing,
+        "recommended_missing": recommended_missing,
+        "categories": categories,
+        "is_compliant": len(required_missing) == 0,
     }

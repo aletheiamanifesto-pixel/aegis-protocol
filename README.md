@@ -195,6 +195,8 @@ ProofMint is a self-service module for creating ESPR-aligned Digital Product Pas
 | `POST` | `/proofmint/dpp/create` | Create DPP (hash + IPFS + on-chain registration) |
 | `GET`  | `/proofmint/dpp/{dpp_id}` | Get DPP details |
 | `GET`  | `/proofmint/verify/{product_id}` | Public verification endpoint |
+| `GET`  | `/proofmint/verify/{product_id}/full` | Regulator-level full verification (viewing key required) |
+| `GET`  | `/proofmint/verify/{product_id}/recycler` | Recycler-level materials/hazard/disassembly view (viewing key required) |
 | `PUT`  | `/proofmint/dpp/{dpp_id}` | Update DPP (version bump) |
 | `DELETE` | `/proofmint/dpp/{dpp_id}` | Revoke/deactivate DPP |
 | `GET` | `/proofmint/brands/{brand_id}/products` | List brand products |
@@ -220,6 +222,14 @@ curl -X POST http://localhost:8000/proofmint/dpp/create \\
 
 # 4) Verify publicly
 curl http://localhost:8000/proofmint/verify/SKU-001
+
+# 5) Verify as regulator (full)
+curl http://localhost:8000/proofmint/verify/SKU-001/full \
+  -H 'X-Viewing-Key-Scope: regulator'
+
+# 6) Verify as recycler (materials/hazard/disassembly)
+curl http://localhost:8000/proofmint/verify/SKU-001/recycler \
+  -H 'X-Viewing-Key-Scope: recycler'
 ```
 
 ```mermaid
@@ -230,6 +240,29 @@ flowchart LR
     P --> C[ProofMintRegistry.sol]
     C --> V[Public Verify Endpoint]
 ```
+
+#### Compliance
+
+**ESPR coverage (8 areas):**
+
+| Area | Key fields covered in HALA ProofMint |
+|------|--------------------------------------|
+| 1. Identity | `productId`, `productName`, `category`, `model_variant`, `product_image_url` |
+| 2. Economic Operator | `brand_name`, `operator_type`, `operator_address`, `facility_id`, `eori_number` |
+| 3. Hazardous Substances | `hazardous_substances`, `reach_compliant`, `rohs_compliant` |
+| 4. Environmental | `carbon_footprint_kg`, `carbon_footprint_method`, `energy_consumption_kwh`, `water_consumption_liters` |
+| 5. Durability & Repairability | `expected_lifetime_years`, `repair_score`, `spare_parts_available`, `warranty_duration_months`, `maintenance_instructions` |
+| 6. Circularity | `recyclability_percent`, `recycled_content_percent`, `recycling_instructions`, `disassembly_instructions`, `reuse_potential` |
+| 7. Conformity | `certifications`, `ce_marking`, `conformity_declaration_url`, `test_reports_urls` |
+| 8. Customs/Trade | `hs_code`, `cn_code` |
+
+**ProofMint access levels:**
+
+| Access level | Endpoint | Data visibility |
+|--------------|----------|-----------------|
+| Public | `GET /proofmint/verify/{product_id}` | Public-safe product data only (no hazardous detail, no EORI/facility/operator address, no test reports) |
+| Regulator | `GET /proofmint/verify/{product_id}/full` | Full DPP payload |
+| Recycler | `GET /proofmint/verify/{product_id}/recycler` | Materials + hazardous + disassembly/circularity subset |
 
 ---
 
