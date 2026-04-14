@@ -67,6 +67,7 @@ from routers.transactions import router as transactions_router
 from routers.viewing_keys import router as viewing_keys_router
 from routers.viewing_keys_v2 import router as viewing_keys_v2_router
 from routers.wallet import router as wallet_router
+from proofmint.router import router as proofmint_router
 
 app.include_router(auth_router)
 app.include_router(wallet_router)
@@ -80,6 +81,7 @@ app.include_router(settlement_router)
 app.include_router(oracle_router)
 app.include_router(reporting_router)
 app.include_router(bridge_router)
+app.include_router(proofmint_router)
 
 
 # ---------------------------------------------------------------------------
