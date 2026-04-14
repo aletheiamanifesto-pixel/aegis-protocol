@@ -1,0 +1,5 @@
+<svg width="120" height="36" viewBox="0 0 120 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="36" height="36" rx="8" fill="#16a34a"/>
+  <path d="M10 20h5v6h6v-6h5v-4h-5v-6h-6v6h-5v4z" fill="white"/>
+  <text x="46" y="24" fill="#0f172a" font-family="Inter, sans-serif" font-size="18" font-weight="700">HALA</text>
+</svg>
