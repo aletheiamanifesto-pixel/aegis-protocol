@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import secrets
 from datetime import datetime, timezone
 
@@ -19,6 +20,7 @@ from proofmint.schemas import (
     BrandRegister,
     DPPCreate,
     DPPResponse,
+    MaterialDetail,
     ProductCreate,
 )
 from proofmint.storage_service import get_from_ipfs, upload_to_ipfs
@@ -26,6 +28,10 @@ from proofmint.storage_service import get_from_ipfs, upload_to_ipfs
 router = APIRouter(prefix="/proofmint", tags=["proofmint"])
 
 _tables_ready = False
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
 
 
 def _ensure_tables(db: Session) -> None:
@@ -49,6 +55,10 @@ def _dpp_hash(payload: dict) -> str:
     return "0x" + hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _serialize_materials_detailed(payload: DPPCreate) -> list[dict]:
+    return [material.model_dump() for material in payload.materials_detailed]
+
+
 def _serialize_response(product: Product, dpp: DigitalProductPassport, brand: Brand) -> DPPResponse:
     return DPPResponse(
         productId=product.product_id,
@@ -60,6 +70,35 @@ def _serialize_response(product: Product, dpp: DigitalProductPassport, brand: Br
         certifications=dpp.certifications_json or [],
         recycling_instructions=dpp.recycling_instructions,
         brand_name=brand.name,
+        materials_detailed=[MaterialDetail(**entry) for entry in (dpp.materials_detailed_json or [])],
+        operator_type=dpp.operator_type,
+        operator_address=dpp.operator_address,
+        facility_id=dpp.facility_id,
+        eori_number=dpp.eori_number,
+        hazardous_substances=dpp.hazardous_substances_json or [],
+        reach_compliant=dpp.reach_compliant,
+        rohs_compliant=dpp.rohs_compliant,
+        carbon_footprint_method=dpp.carbon_footprint_method,
+        energy_consumption_kwh=dpp.energy_consumption_kwh,
+        water_consumption_liters=dpp.water_consumption_liters,
+        expected_lifetime_years=dpp.expected_lifetime_years,
+        repair_score=dpp.repair_score,
+        spare_parts_available=dpp.spare_parts_available,
+        warranty_duration_months=dpp.warranty_duration_months,
+        warranty_terms=dpp.warranty_terms,
+        maintenance_instructions=dpp.maintenance_instructions,
+        recyclability_percent=dpp.recyclability_percent,
+        recycled_content_percent=dpp.recycled_content_percent,
+        disassembly_instructions=dpp.disassembly_instructions,
+        collection_points_url=dpp.collection_points_url,
+        reuse_potential=dpp.reuse_potential,
+        ce_marking=dpp.ce_marking,
+        conformity_declaration_url=dpp.conformity_declaration_url,
+        test_reports_urls=dpp.test_reports_urls_json or [],
+        hs_code=dpp.hs_code,
+        cn_code=dpp.cn_code,
+        product_image_url=dpp.product_image_url,
+        model_variant=dpp.model_variant,
         dpp_hash=dpp.dpp_hash,
         blockchain_tx=dpp.blockchain_tx_hash,
         ipfs_cid=dpp.ipfs_cid,
@@ -67,6 +106,48 @@ def _serialize_response(product: Product, dpp: DigitalProductPassport, brand: Br
         version=dpp.version,
         verification_url=f"/proofmint/verify/{product.product_id}",
     )
+
+
+def _resolve_viewing_scope(x_viewing_key: str | None, x_viewing_key_scope: str | None) -> str:
+    scope_value = (x_viewing_key_scope or "").strip().lower()
+    allow_scope_header = _env_flag("PROOFMINT_ALLOW_SCOPE_HEADER")
+    if scope_value and allow_scope_header:
+        if scope_value == "regulator":
+            return "full_access"
+        if scope_value == "recycler":
+            return "tx_only"
+        raise HTTPException(status_code=403, detail="Unsupported scope header value")
+
+    if not x_viewing_key:
+        raise HTTPException(status_code=401, detail="Missing viewing key")
+
+    try:
+        from routers.viewing_keys_v2 import _get_vk_manager
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Viewing key authentication module (routers.viewing_keys_v2) is not available",
+        ) from exc
+
+    manager = _get_vk_manager()
+    info = manager.get_key_info(x_viewing_key)
+    if not info:
+        raise HTTPException(status_code=403, detail="Invalid viewing key")
+    if info.get("status") != "active":
+        raise HTTPException(status_code=403, detail="Inactive viewing key")
+    return str(info.get("scope", "")).lower()
+
+
+def _require_regulator_scope(x_viewing_key: str | None, x_viewing_key_scope: str | None) -> None:
+    scope = _resolve_viewing_scope(x_viewing_key, x_viewing_key_scope)
+    if scope != "full_access":
+        raise HTTPException(status_code=403, detail="Regulator-level viewing key required")
+
+
+def _require_recycler_scope(x_viewing_key: str | None, x_viewing_key_scope: str | None) -> None:
+    scope = _resolve_viewing_scope(x_viewing_key, x_viewing_key_scope)
+    if scope not in {"tx_only", "full_access"}:
+        raise HTTPException(status_code=403, detail="Recycler-level viewing key required")
 
 
 @router.post("/brands/register", status_code=201)
@@ -78,7 +159,19 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Brand email already registered")
 
     api_key = secrets.token_urlsafe(32)
-    brand = Brand(name=payload.name, email=payload.email, api_key=api_key, plan=payload.plan)
+    brand = Brand(
+        name=payload.name,
+        email=payload.email,
+        api_key=api_key,
+        plan=payload.plan,
+        operator_type=payload.operator_type,
+        address=payload.address,
+        country=payload.country,
+        phone=payload.phone,
+        website=payload.website,
+        eori_number=payload.eori_number,
+        facility_id=payload.facility_id,
+    )
     db.add(brand)
     db.commit()
     db.refresh(brand)
@@ -88,6 +181,13 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
         "name": brand.name,
         "email": brand.email,
         "plan": brand.plan,
+        "operator_type": brand.operator_type,
+        "address": brand.address,
+        "country": brand.country,
+        "phone": brand.phone,
+        "website": brand.website,
+        "eori_number": brand.eori_number,
+        "facility_id": brand.facility_id,
         "api_key": brand.api_key,
     }
 
@@ -150,10 +250,39 @@ def create_dpp(payload: DPPCreate, db: Session = Depends(get_db), api_key: str |
         ipfs_cid=ipfs_cid,
         version=next_version,
         materials_json=payload.materials,
+        materials_detailed_json=_serialize_materials_detailed(payload),
         origin_country=payload.origin_country,
         carbon_footprint_kg=payload.carbon_footprint_kg,
         certifications_json=payload.certifications,
         recycling_instructions=payload.recycling_instructions,
+        hazardous_substances_json=payload.hazardous_substances,
+        reach_compliant=payload.reach_compliant,
+        rohs_compliant=payload.rohs_compliant,
+        carbon_footprint_method=payload.carbon_footprint_method,
+        energy_consumption_kwh=payload.energy_consumption_kwh,
+        water_consumption_liters=payload.water_consumption_liters,
+        expected_lifetime_years=payload.expected_lifetime_years,
+        repair_score=payload.repair_score,
+        spare_parts_available=payload.spare_parts_available,
+        warranty_duration_months=payload.warranty_duration_months,
+        warranty_terms=payload.warranty_terms,
+        maintenance_instructions=payload.maintenance_instructions,
+        recyclability_percent=payload.recyclability_percent,
+        recycled_content_percent=payload.recycled_content_percent,
+        disassembly_instructions=payload.disassembly_instructions,
+        collection_points_url=payload.collection_points_url,
+        reuse_potential=payload.reuse_potential,
+        ce_marking=payload.ce_marking,
+        conformity_declaration_url=payload.conformity_declaration_url,
+        test_reports_urls_json=payload.test_reports_urls,
+        hs_code=payload.hs_code,
+        cn_code=payload.cn_code,
+        product_image_url=payload.product_image_url,
+        model_variant=payload.model_variant,
+        operator_type=payload.operator_type,
+        operator_address=payload.operator_address,
+        facility_id=payload.facility_id,
+        eori_number=payload.eori_number,
         is_active=True,
     )
     db.add(dpp)
@@ -200,9 +329,94 @@ def verify_product_dpp(product_id: str, db: Session = Depends(get_db)):
         "passport_data": {
             "dpp_id": dpp.id,
             "product_id": product.product_id,
+            "product_name": product.product_name,
+            "category": product.category,
+            "brand_name": product.brand.name if product.brand else None,
+            "model_variant": dpp.model_variant,
+            "materials": dpp.materials_json or [],
+            "origin_country": dpp.origin_country,
+            "carbon_footprint_kg": dpp.carbon_footprint_kg,
+            "carbon_footprint_method": dpp.carbon_footprint_method,
+            "certifications": dpp.certifications_json or [],
+            "recycling_instructions": dpp.recycling_instructions,
+            "recyclability_percent": dpp.recyclability_percent,
+            "recycled_content_percent": dpp.recycled_content_percent,
+            "ce_marking": dpp.ce_marking,
+            "operator_type": dpp.operator_type,
+            "product_image_url": dpp.product_image_url,
             "dpp_hash": dpp.dpp_hash,
             "version": dpp.version,
             "ipfs_cid": dpp.ipfs_cid,
+        },
+    }
+
+
+@router.get("/verify/{product_id}/full")
+def verify_product_dpp_full(
+    product_id: str,
+    db: Session = Depends(get_db),
+    viewing_key: str | None = Header(default=None, alias="X-Viewing-Key"),
+    viewing_key_scope: str | None = Header(default=None, alias="X-Viewing-Key-Scope"),
+):
+    _require_regulator_scope(viewing_key, viewing_key_scope)
+    _ensure_tables(db)
+    product = db.query(Product).filter(Product.product_id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    dpp = (
+        db.query(DigitalProductPassport)
+        .filter(DigitalProductPassport.product_id == product.id)
+        .order_by(desc(DigitalProductPassport.version))
+        .first()
+    )
+    if not dpp or not dpp.is_active:
+        return {"is_valid": False, "passport_data": None}
+
+    return {
+        "is_valid": bool(verify_passport_onchain(dpp.id, dpp.dpp_hash)),
+        "passport_data": _serialize_response(product, dpp, product.brand).model_dump(),
+    }
+
+
+@router.get("/verify/{product_id}/recycler")
+def verify_product_dpp_recycler(
+    product_id: str,
+    db: Session = Depends(get_db),
+    viewing_key: str | None = Header(default=None, alias="X-Viewing-Key"),
+    viewing_key_scope: str | None = Header(default=None, alias="X-Viewing-Key-Scope"),
+):
+    _require_recycler_scope(viewing_key, viewing_key_scope)
+    _ensure_tables(db)
+    product = db.query(Product).filter(Product.product_id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    dpp = (
+        db.query(DigitalProductPassport)
+        .filter(DigitalProductPassport.product_id == product.id)
+        .order_by(desc(DigitalProductPassport.version))
+        .first()
+    )
+    if not dpp or not dpp.is_active:
+        return {"is_valid": False, "passport_data": None}
+
+    return {
+        "is_valid": bool(verify_passport_onchain(dpp.id, dpp.dpp_hash)),
+        "passport_data": {
+            "dpp_id": dpp.id,
+            "product_id": product.product_id,
+            "product_name": product.product_name,
+            "category": product.category,
+            "materials": dpp.materials_json or [],
+            "materials_detailed": dpp.materials_detailed_json or [],
+            "hazardous_substances": dpp.hazardous_substances_json or [],
+            "disassembly_instructions": dpp.disassembly_instructions,
+            "recycling_instructions": dpp.recycling_instructions,
+            "recyclability_percent": dpp.recyclability_percent,
+            "recycled_content_percent": dpp.recycled_content_percent,
+            "version": dpp.version,
+            "dpp_hash": dpp.dpp_hash,
         },
     }
 
@@ -230,10 +444,39 @@ def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), a
     dpp.blockchain_tx_hash = tx_hash
     dpp.version += 1
     dpp.materials_json = payload.materials
+    dpp.materials_detailed_json = _serialize_materials_detailed(payload)
     dpp.origin_country = payload.origin_country
     dpp.carbon_footprint_kg = payload.carbon_footprint_kg
     dpp.certifications_json = payload.certifications
     dpp.recycling_instructions = payload.recycling_instructions
+    dpp.hazardous_substances_json = payload.hazardous_substances
+    dpp.reach_compliant = payload.reach_compliant
+    dpp.rohs_compliant = payload.rohs_compliant
+    dpp.carbon_footprint_method = payload.carbon_footprint_method
+    dpp.energy_consumption_kwh = payload.energy_consumption_kwh
+    dpp.water_consumption_liters = payload.water_consumption_liters
+    dpp.expected_lifetime_years = payload.expected_lifetime_years
+    dpp.repair_score = payload.repair_score
+    dpp.spare_parts_available = payload.spare_parts_available
+    dpp.warranty_duration_months = payload.warranty_duration_months
+    dpp.warranty_terms = payload.warranty_terms
+    dpp.maintenance_instructions = payload.maintenance_instructions
+    dpp.recyclability_percent = payload.recyclability_percent
+    dpp.recycled_content_percent = payload.recycled_content_percent
+    dpp.disassembly_instructions = payload.disassembly_instructions
+    dpp.collection_points_url = payload.collection_points_url
+    dpp.reuse_potential = payload.reuse_potential
+    dpp.ce_marking = payload.ce_marking
+    dpp.conformity_declaration_url = payload.conformity_declaration_url
+    dpp.test_reports_urls_json = payload.test_reports_urls
+    dpp.hs_code = payload.hs_code
+    dpp.cn_code = payload.cn_code
+    dpp.product_image_url = payload.product_image_url
+    dpp.model_variant = payload.model_variant
+    dpp.operator_type = payload.operator_type
+    dpp.operator_address = payload.operator_address
+    dpp.facility_id = payload.facility_id
+    dpp.eori_number = payload.eori_number
     dpp.updated_at = datetime.now(timezone.utc)
 
     product.product_name = payload.productName
@@ -310,6 +553,12 @@ def brand_stats(brand_id: int, db: Session = Depends(get_db), api_key: str | Non
                 "materials": dpp.materials_json or [],
                 "origin_country": dpp.origin_country,
                 "brand_name": brand.name,
+                "model_variant": dpp.model_variant,
+                "operator_type": dpp.operator_type,
+                "carbon_footprint_kg": dpp.carbon_footprint_kg,
+                "recycling_instructions": dpp.recycling_instructions,
+                "recyclability_percent": dpp.recyclability_percent,
+                "certifications": dpp.certifications_json or [],
             }
         )
         if check["is_compliant"]:

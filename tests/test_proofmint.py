@@ -72,6 +72,47 @@ def _dpp_payload(carbon=2.5):
     }
 
 
+def _dpp_payload_full():
+    payload = _dpp_payload()
+    payload.update(
+        {
+            "materials_detailed": [
+                {"name": "glass", "weight_percent": 70.0, "recycled_content_percent": 40.0, "origin_country": "IT"},
+                {"name": "plastic", "weight_percent": 30.0, "recycled_content_percent": 20.0, "origin_country": "DE"},
+            ],
+            "operator_type": "manufacturer",
+            "operator_address": "Via Roma 1, Milano, IT",
+            "facility_id": "FAC-001",
+            "eori_number": "IT1234567890",
+            "hazardous_substances": ["Substance-A"],
+            "reach_compliant": True,
+            "rohs_compliant": True,
+            "carbon_footprint_method": "ISO_14067",
+            "energy_consumption_kwh": 15.2,
+            "water_consumption_liters": 21.0,
+            "expected_lifetime_years": 2.0,
+            "repair_score": 8.2,
+            "spare_parts_available": True,
+            "warranty_duration_months": 24,
+            "warranty_terms": "Standard warranty",
+            "maintenance_instructions": "Keep in cool and dry place",
+            "recyclability_percent": 88.5,
+            "recycled_content_percent": 34.2,
+            "disassembly_instructions": "Separate cap and bottle",
+            "collection_points_url": "https://example.com/collection",
+            "reuse_potential": "high",
+            "ce_marking": True,
+            "conformity_declaration_url": "https://example.com/conformity.pdf",
+            "test_reports_urls": ["https://example.com/report-1.pdf"],
+            "hs_code": "330499",
+            "cn_code": "33049900",
+            "product_image_url": "https://example.com/product.png",
+            "model_variant": "2026-A",
+        }
+    )
+    return payload
+
+
 def test_brand_registration_and_product_creation():
     brand = _register_brand()
     product = _create_product(brand["api_key"])
@@ -132,11 +173,150 @@ def test_dpp_update_increments_version():
 
 
 def test_ai_compliance_validation_and_gs1_formatting():
-    compliance = validate_compliance(_dpp_payload())
+    compliance = validate_compliance(_dpp_payload_full())
     assert compliance["is_compliant"] is True
     assert compliance["compliance_score"] == 100
+    assert compliance["compliance_level"] == "full"
+    assert compliance["required_missing"] == []
 
-    epcis = format_as_epcis(_dpp_payload())
+    epcis = format_as_epcis(_dpp_payload_full())
     assert epcis["type"] == "EPCISDocument"
     assert epcis["schemaVersion"] == "2.0"
     assert epcis["epcisBody"]["eventList"][0]["type"] == "ObjectEvent"
+    assert "identity" in epcis["epcisBody"]["eventList"][0]["proofmint:dpp"]
+
+
+def test_brand_registration_accepts_extended_fields():
+    response = client.post(
+        "/proofmint/brands/register",
+        json={
+            "name": "Aegis Brand Extended",
+            "email": "brand-extended@proofmint.test",
+            "plan": "pro",
+            "operator_type": "importer",
+            "address": "Via Torino 10, Torino, IT",
+            "country": "IT",
+            "phone": "+3902123456",
+            "website": "https://brand.example",
+            "eori_number": "ITX123",
+            "facility_id": "FAC-BRAND-99",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["operator_type"] == "importer"
+    assert body["eori_number"] == "ITX123"
+    assert body["facility_id"] == "FAC-BRAND-99"
+
+
+def test_dpp_creation_with_extended_fields_and_access_levels():
+    os.environ["PROOFMINT_ALLOW_SCOPE_HEADER"] = "true"
+    try:
+        brand = client.post(
+            "/proofmint/brands/register",
+            json={"name": "Aegis Brand 4", "email": "brand4@proofmint.test", "plan": "business"},
+        ).json()
+        client.post(
+            "/proofmint/products",
+            json={"product_id": "SKU-004", "product_name": "Luxury Balm", "category": "skincare"},
+            headers={"X-API-Key": brand["api_key"]},
+        )
+
+        payload = _dpp_payload_full()
+        payload["productId"] = "SKU-004"
+        payload["productName"] = "Luxury Balm"
+        payload["brand_name"] = "Aegis Brand 4"
+
+        create_resp = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
+        assert create_resp.status_code == 201, create_resp.text
+        created = create_resp.json()
+        assert created["materials_detailed"][0]["name"] == "glass"
+        assert created["hazardous_substances"] == ["Substance-A"]
+        assert created["test_reports_urls"] == ["https://example.com/report-1.pdf"]
+        assert created["model_variant"] == "2026-A"
+
+        public_resp = client.get("/proofmint/verify/SKU-004")
+        assert public_resp.status_code == 200
+        public_data = public_resp.json()["passport_data"]
+        assert "hazardous_substances" not in public_data
+        assert "eori_number" not in public_data
+        assert "facility_id" not in public_data
+        assert "test_reports_urls" not in public_data
+
+        full_unauthorized = client.get("/proofmint/verify/SKU-004/full")
+        assert full_unauthorized.status_code == 401
+
+        full_resp = client.get("/proofmint/verify/SKU-004/full", headers={"X-Viewing-Key-Scope": "regulator"})
+        assert full_resp.status_code == 200, full_resp.text
+        full_data = full_resp.json()["passport_data"]
+        assert full_data["hazardous_substances"] == ["Substance-A"]
+        assert full_data["eori_number"] == "IT1234567890"
+        assert full_data["facility_id"] == "FAC-001"
+
+        recycler_resp = client.get("/proofmint/verify/SKU-004/recycler", headers={"X-Viewing-Key-Scope": "recycler"})
+        assert recycler_resp.status_code == 200, recycler_resp.text
+        recycler_data = recycler_resp.json()["passport_data"]
+        assert recycler_data["materials_detailed"][0]["name"] == "glass"
+        assert recycler_data["hazardous_substances"] == ["Substance-A"]
+        assert recycler_data["disassembly_instructions"] == "Separate cap and bottle"
+        assert "eori_number" not in recycler_data
+        assert "operator_address" not in recycler_data
+    finally:
+        os.environ.pop("PROOFMINT_ALLOW_SCOPE_HEADER", None)
+
+
+def test_compliance_validation_multi_category_scoring():
+    compliance = validate_compliance(_dpp_payload())
+    assert compliance["is_compliant"] is False
+    assert "model_variant" in compliance["required_missing"]
+    assert "operator_type" in compliance["required_missing"]
+    assert "recyclability_percent" in compliance["required_missing"]
+    assert "identity" in compliance["categories"]
+    assert compliance["compliance_score"] < 85
+    assert compliance["compliance_level"] in {"critical", "low", "medium"}
+
+
+def test_backward_compatibility_original_dpp_payload_still_works():
+    brand = client.post(
+        "/proofmint/brands/register",
+        json={"name": "Aegis Brand 5", "email": "brand5@proofmint.test", "plan": "free"},
+    ).json()
+    client.post(
+        "/proofmint/products",
+        json={"product_id": "SKU-005", "product_name": "Legacy Oil", "category": "skincare"},
+        headers={"X-API-Key": brand["api_key"]},
+    )
+
+    payload = _dpp_payload()
+    payload["productId"] = "SKU-005"
+    payload["productName"] = "Legacy Oil"
+    payload["brand_name"] = "Aegis Brand 5"
+
+    response = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["productId"] == "SKU-005"
+    assert body["materials_detailed"] == []
+    assert body["hazardous_substances"] == []
+
+
+def test_scope_header_requires_feature_flag():
+    brand = client.post(
+        "/proofmint/brands/register",
+        json={"name": "Aegis Brand 6", "email": "brand6@proofmint.test", "plan": "free"},
+    ).json()
+    client.post(
+        "/proofmint/products",
+        json={"product_id": "SKU-006", "product_name": "Flag Test", "category": "skincare"},
+        headers={"X-API-Key": brand["api_key"]},
+    )
+    payload = _dpp_payload()
+    payload["productId"] = "SKU-006"
+    payload["productName"] = "Flag Test"
+    payload["brand_name"] = "Aegis Brand 6"
+    create_resp = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
+    assert create_resp.status_code == 201, create_resp.text
+
+    os.environ.pop("PROOFMINT_ALLOW_SCOPE_HEADER", None)
+    blocked = client.get("/proofmint/verify/SKU-006/full", headers={"X-Viewing-Key-Scope": "regulator"})
+    assert blocked.status_code == 401
