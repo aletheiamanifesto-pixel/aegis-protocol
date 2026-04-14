@@ -7,21 +7,35 @@ import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getBrandStats } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 export default function SettingsPage() {
   const { auth } = useAuth();
   const [email, setEmail] = useState("N/A");
+  const [used, setUsed] = useState(0);
 
   useEffect(() => {
     const stored = localStorage.getItem("hala_email");
     if (stored) setEmail(stored);
   }, []);
 
+  useEffect(() => {
+    async function loadUsage() {
+      if (!auth) return;
+      try {
+        const stats = await getBrandStats(auth.brandId, auth.apiKey);
+        setUsed(stats.total_products);
+      } catch {
+        setUsed(0);
+      }
+    }
+    loadUsage();
+  }, [auth]);
+
   if (!auth) return null;
 
   const limit = auth.plan === "pro" ? 500 : 5;
-  const used = 0;
   const percent = (used / limit) * 100;
 
   return (

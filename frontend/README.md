@@ -1,6 +1,6 @@
 # HALA.wtf Frontend
 
-Next.js frontend for ProofMint Digital Product Passport.
+Next.js frontend for HALA.wtf Digital Product Passport.
 
 ## Setup
 

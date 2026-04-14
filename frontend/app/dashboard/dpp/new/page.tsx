@@ -61,7 +61,7 @@ export default function NewDppPage() {
     cn_code: ""
   });
 
-  const required = [form.productId, form.productName, form.category, form.origin_country, form.recycling_instructions, form.materials.length > 0 ? "ok" : "", auth?.brandName || ""];
+  const requiredValues = [form.productId, form.productName, form.category, form.origin_country, form.recycling_instructions, form.materials.length > 0 ? "ok" : "", auth?.brandName || ""];
   const requiredMissing = [
     !form.productId && "Product ID",
     !form.productName && "Product Name",
@@ -81,14 +81,14 @@ export default function NewDppPage() {
   const compliance = useMemo(() => {
     const total = 10;
     const filled = [
-      ...required.map((v) => !!v),
+      ...requiredValues.map((v) => !!v),
       !!form.carbon_footprint_kg,
       form.certifications.length > 0,
       !!form.recyclability_percent,
       !!form.expected_lifetime_years
     ].filter(Boolean).length;
     return Math.round((filled / total) * 100);
-  }, [form, required]);
+  }, [form, requiredValues]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -167,7 +167,7 @@ export default function NewDppPage() {
 
         <details open className="rounded-lg border bg-white p-4"><summary className="cursor-pointer font-semibold">3) Origin & Operator</summary><div className="mt-4 grid gap-3"><div><Label>Origin country</Label><Select value={form.origin_country} onValueChange={(origin_country) => setForm({ ...form, origin_country })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{countries.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div><div><Label>Operator type</Label><Select value={form.operator_type} onValueChange={(operator_type) => setForm({ ...form, operator_type })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="manufacturer">manufacturer</SelectItem><SelectItem value="importer">importer</SelectItem><SelectItem value="representative">representative</SelectItem></SelectContent></Select></div><div><Label>Facility ID</Label><Input value={form.facility_id} onChange={(e) => setForm({ ...form, facility_id: e.target.value })} /></div>{form.operator_type === "importer" && <div><Label>EORI number</Label><Input value={form.eori_number} onChange={(e) => setForm({ ...form, eori_number: e.target.value })} /></div>}</div></details>
 
-        <details className="rounded-lg border bg-white p-4"><summary className="cursor-pointer font-semibold">4) Environmental Impact</summary><div className="mt-4 grid gap-3"><div><Label>Carbon footprint (kg CO₂)</Label><div className="flex gap-2"><Input value={form.carbon_footprint_kg} onChange={(e) => setForm({ ...form, carbon_footprint_kg: e.target.value })} /><Button type="button" variant="outline" onClick={() => setForm({ ...form, carbon_footprint_kg: "2.4" })}>Estimate with AI</Button></div></div><div><Label>Method</Label><Select value={form.carbon_footprint_method} onValueChange={(carbon_footprint_method) => setForm({ ...form, carbon_footprint_method })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["PEF", "ISO 14067", "GHG Protocol", "Estimated"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div><div><Label>Energy (kWh)</Label><Input value={form.energy_consumption_kwh} onChange={(e) => setForm({ ...form, energy_consumption_kwh: e.target.value })} /></div><div><Label>Water (liters)</Label><Input value={form.water_consumption_liters} onChange={(e) => setForm({ ...form, water_consumption_liters: e.target.value })} /></div></div></details>
+        <details className="rounded-lg border bg-white p-4"><summary className="cursor-pointer font-semibold">4) Environmental Impact</summary><div className="mt-4 grid gap-3"><div><Label>Carbon footprint (kg CO₂)</Label><div className="flex gap-2"><Input value={form.carbon_footprint_kg} onChange={(e) => setForm({ ...form, carbon_footprint_kg: e.target.value })} /><Button type="button" variant="outline" disabled>Estimate with AI</Button></div><p className="text-xs text-slate-500">AI estimation coming soon.</p></div><div><Label>Method</Label><Select value={form.carbon_footprint_method} onValueChange={(carbon_footprint_method) => setForm({ ...form, carbon_footprint_method })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["PEF", "ISO 14067", "GHG Protocol", "Estimated"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div><div><Label>Energy (kWh)</Label><Input value={form.energy_consumption_kwh} onChange={(e) => setForm({ ...form, energy_consumption_kwh: e.target.value })} /></div><div><Label>Water (liters)</Label><Input value={form.water_consumption_liters} onChange={(e) => setForm({ ...form, water_consumption_liters: e.target.value })} /></div></div></details>
 
         <details className="rounded-lg border bg-white p-4"><summary className="cursor-pointer font-semibold">5) Durability & Warranty</summary><div className="mt-4 grid gap-3"><Input placeholder="Expected lifetime years" value={form.expected_lifetime_years} onChange={(e) => setForm({ ...form, expected_lifetime_years: e.target.value })} /><Input placeholder="Repair score 0-10" value={form.repair_score} onChange={(e) => setForm({ ...form, repair_score: e.target.value })} /><label><input type="checkbox" checked={form.spare_parts_available} onChange={(e) => setForm({ ...form, spare_parts_available: e.target.checked })} /> Spare parts available</label><Input placeholder="Warranty months" value={form.warranty_duration_months} onChange={(e) => setForm({ ...form, warranty_duration_months: e.target.value })} /><Textarea placeholder="Warranty terms" value={form.warranty_terms} onChange={(e) => setForm({ ...form, warranty_terms: e.target.value })} /><Textarea placeholder="Maintenance instructions" value={form.maintenance_instructions} onChange={(e) => setForm({ ...form, maintenance_instructions: e.target.value })} /></div></details>
 

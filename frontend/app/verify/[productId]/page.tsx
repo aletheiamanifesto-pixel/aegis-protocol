@@ -64,8 +64,8 @@ export default function VerifyPage({ params }: { params: { productId: string } }
         <Card className="border-red-200">
           <CardContent className="p-6 text-center">
             <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-red-600" />
-            <h1 className="text-xl font-semibold">We couldn&apos;t reach HALA verification right now</h1>
-            <p className="mt-2 text-sm text-slate-600">Please try again in a moment. If this continues, contact the brand directly.</p>
+            <h1 className="text-xl font-semibold">Verification is temporarily unavailable</h1>
+            <p className="mt-2 text-sm text-slate-600">Check your internet connection and retry. If this continues, contact the brand through their official support channels and share product ID "{params.productId}".</p>
           </CardContent>
         </Card>
       </main>
@@ -78,7 +78,7 @@ export default function VerifyPage({ params }: { params: { productId: string } }
         <Card>
           <CardContent className="p-6 text-center">
             <h1 className="text-xl font-semibold">Product not found</h1>
-            <p className="mt-2 text-sm text-slate-600">This product ID does not exist in the HALA registry.</p>
+            <p className="mt-2 text-sm text-slate-600">This product ID does not exist in the HALA registry. Please check the ID or contact the brand for verification.</p>
           </CardContent>
         </Card>
       </main>

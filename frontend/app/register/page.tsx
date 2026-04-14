@@ -45,7 +45,6 @@ export default function RegisterPage() {
       localStorage.setItem("hala_email", form.email);
       setAuth({ apiKey: data.api_key, brandId: data.brand_id, brandName: data.name, plan: data.plan });
       setApiKey(data.api_key);
-      setTimeout(() => router.push("/dashboard"), 2200);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -74,13 +73,14 @@ export default function RegisterPage() {
           {apiKey && (
             <Card className="mt-5 border-green-300">
               <CardContent className="space-y-2 p-4">
-                <p className="font-semibold text-green-700">Save this! You won&apos;t see it again.</p>
-                <div className="flex gap-2">
-                  <Input value={apiKey} readOnly />
-                  <Button type="button" variant="outline" onClick={() => navigator.clipboard.writeText(apiKey)}><Copy className="h-4 w-4" /></Button>
-                </div>
-              </CardContent>
-            </Card>
+                <p className="font-semibold text-green-700">IMPORTANT: Copy this API key now — it cannot be retrieved later.</p>
+              <div className="flex gap-2">
+                <Input value={apiKey} readOnly />
+                <Button type="button" variant="outline" onClick={() => navigator.clipboard.writeText(apiKey)}><Copy className="h-4 w-4" /></Button>
+              </div>
+              <Button type="button" onClick={() => router.push("/dashboard")}>Continue to dashboard</Button>
+            </CardContent>
+          </Card>
           )}
         </CardContent>
       </Card>

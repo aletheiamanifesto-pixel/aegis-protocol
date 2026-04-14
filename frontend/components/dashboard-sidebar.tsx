@@ -25,7 +25,7 @@ export function DashboardSidebar() {
   return (
     <aside className="w-full border-b bg-white p-4 md:w-64 md:border-b-0 md:border-r md:min-h-screen">
       <Link href="/dashboard" className="mb-6 flex items-center gap-2 text-lg font-semibold">
-        <Image src="/hala-logo.svg" alt="HALA" width={120} height={36} className="h-8 w-auto" />
+        <Image src="/hala-logo.svg" alt="HALA logo" width={120} height={36} className="h-8 w-auto" />
       </Link>
       <nav className="space-y-2">
         {items.map((item) => {

@@ -25,7 +25,7 @@ export function TagInput({ values, onChange, placeholder }: { values: string[]; 
         {values.map((item) => (
           <Badge key={item} variant="secondary" className="gap-1">
             {item}
-            <button type="button" onClick={() => onChange(values.filter((v) => v !== item))}>
+            <button type="button" aria-label={`Remove ${item}`} onClick={() => onChange(values.filter((v) => v !== item))}>
               <X className="h-3 w-3" />
             </button>
           </Badge>
