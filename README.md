@@ -232,6 +232,9 @@ curl http://localhost:8000/proofmint/verify/SKU-001/recycler \
   -H 'X-Viewing-Key-Scope: recycler'
 ```
 
+> Note: `X-Viewing-Key-Scope` is a test/simulation shortcut and requires `PROOFMINT_ALLOW_SCOPE_HEADER=true`.
+> In production flows use a real `X-Viewing-Key` issued by the Viewing Keys V2 system.
+
 ```mermaid
 flowchart LR
     B[Brand] -->|/proofmint/* API| P[ProofMint Router]

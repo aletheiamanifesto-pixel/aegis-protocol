@@ -8,6 +8,8 @@ import httpx
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 logger = logging.getLogger(__name__)
+REQUIRED_FIELDS_WEIGHT_PERCENT = 85
+RECOMMENDED_FIELDS_WEIGHT_PERCENT = 15
 
 ESPR_REQUIRED_FIELDS = {
     "identity": ["productId", "productName", "category", "model_variant"],
@@ -111,6 +113,22 @@ def validate_compliance(dpp_data: dict) -> dict:
     def _is_missing(value) -> bool:
         return value is None or value == "" or value == []
 
+    def _clamp_score(raw_score: float) -> int:
+        return int(round(max(0.0, min(100.0, raw_score))))
+
+    def _weighted_score(req_present: int, req_total: int, rec_present: int, rec_total: int) -> int:
+        required_weight = REQUIRED_FIELDS_WEIGHT_PERCENT if req_total else 0
+        recommended_weight = RECOMMENDED_FIELDS_WEIGHT_PERCENT if rec_total else 0
+        total_weight = required_weight + recommended_weight
+        if total_weight == 0:
+            return 0
+        weighted = 0.0
+        if req_total:
+            weighted += (req_present / req_total) * required_weight
+        if rec_total:
+            weighted += (rec_present / rec_total) * recommended_weight
+        return _clamp_score((weighted / total_weight) * 100)
+
     required_missing = []
     recommended_missing = []
     categories: dict[str, dict] = {}
@@ -132,8 +150,7 @@ def validate_compliance(dpp_data: dict) -> dict:
 
         present_req = len(req_fields) - sum(1 for f in req_fields if _is_missing(dpp_data.get(f)))
         present_rec = len(rec_fields) - sum(1 for f in rec_fields if _is_missing(dpp_data.get(f)))
-        cat_total = len(req_fields) + len(rec_fields)
-        cat_score = 100 if cat_total == 0 else int(round(((present_req + present_rec) / cat_total) * 100))
+        cat_score = _weighted_score(present_req, len(req_fields), present_rec, len(rec_fields))
         categories[category] = {"score": cat_score, "missing": category_missing}
 
     total_required = sum(len(v) for v in ESPR_REQUIRED_FIELDS.values())
@@ -141,9 +158,7 @@ def validate_compliance(dpp_data: dict) -> dict:
     present_required = total_required - len(required_missing)
     present_recommended = total_recommended - len(recommended_missing)
 
-    mandatory_score = 0 if total_required == 0 else (present_required / total_required) * 85
-    bonus_score = 0 if total_recommended == 0 else (present_recommended / total_recommended) * 15
-    score = int(round(min(100, max(0, mandatory_score + bonus_score))))
+    score = _weighted_score(present_required, total_required, present_recommended, total_recommended)
 
     if score < 50:
         compliance_level = "critical"

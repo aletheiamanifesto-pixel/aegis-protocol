@@ -30,6 +30,10 @@ router = APIRouter(prefix="/proofmint", tags=["proofmint"])
 _tables_ready = False
 
 
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes"}
+
+
 def _ensure_tables(db: Session) -> None:
     global _tables_ready
     if not _tables_ready:
@@ -49,6 +53,10 @@ def _get_brand_by_key(db: Session, x_api_key: str | None) -> Brand:
 def _dpp_hash(payload: dict) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return "0x" + hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _serialize_materials_detailed(payload: DPPCreate) -> list[dict]:
+    return [material.model_dump() for material in payload.materials_detailed]
 
 
 def _serialize_response(product: Product, dpp: DigitalProductPassport, brand: Brand) -> DPPResponse:
@@ -102,13 +110,13 @@ def _serialize_response(product: Product, dpp: DigitalProductPassport, brand: Br
 
 def _resolve_viewing_scope(x_viewing_key: str | None, x_viewing_key_scope: str | None) -> str:
     scope_value = (x_viewing_key_scope or "").strip().lower()
-    allow_scope_header = os.getenv("PROOFMINT_ALLOW_SCOPE_HEADER", "").strip().lower() in {"1", "true", "yes"}
+    allow_scope_header = _env_flag("PROOFMINT_ALLOW_SCOPE_HEADER")
     if scope_value and allow_scope_header:
-        if scope_value in {"regulator"}:
+        if scope_value == "regulator":
             return "full_access"
-        if scope_value in {"recycler"}:
+        if scope_value == "recycler":
             return "tx_only"
-        return scope_value
+        raise HTTPException(status_code=403, detail="Unsupported scope header value")
 
     if not x_viewing_key:
         raise HTTPException(status_code=401, detail="Missing viewing key")
@@ -116,7 +124,10 @@ def _resolve_viewing_scope(x_viewing_key: str | None, x_viewing_key_scope: str |
     try:
         from routers.viewing_keys_v2 import _get_vk_manager
     except ImportError as exc:
-        raise HTTPException(status_code=503, detail="Viewing key service unavailable") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Viewing key authentication module (routers.viewing_keys_v2) is not available",
+        ) from exc
 
     manager = _get_vk_manager()
     info = manager.get_key_info(x_viewing_key)
@@ -239,7 +250,7 @@ def create_dpp(payload: DPPCreate, db: Session = Depends(get_db), api_key: str |
         ipfs_cid=ipfs_cid,
         version=next_version,
         materials_json=payload.materials,
-        materials_detailed_json=[material.model_dump() for material in payload.materials_detailed],
+        materials_detailed_json=_serialize_materials_detailed(payload),
         origin_country=payload.origin_country,
         carbon_footprint_kg=payload.carbon_footprint_kg,
         certifications_json=payload.certifications,
@@ -433,7 +444,7 @@ def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), a
     dpp.blockchain_tx_hash = tx_hash
     dpp.version += 1
     dpp.materials_json = payload.materials
-    dpp.materials_detailed_json = [material.model_dump() for material in payload.materials_detailed]
+    dpp.materials_detailed_json = _serialize_materials_detailed(payload)
     dpp.origin_country = payload.origin_country
     dpp.carbon_footprint_kg = payload.carbon_footprint_kg
     dpp.certifications_json = payload.certifications

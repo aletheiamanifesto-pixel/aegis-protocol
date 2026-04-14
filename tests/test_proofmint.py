@@ -5,7 +5,6 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-for-test")
-os.environ["PROOFMINT_ALLOW_SCOPE_HEADER"] = "true"
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -176,8 +175,8 @@ def test_dpp_update_increments_version():
 def test_ai_compliance_validation_and_gs1_formatting():
     compliance = validate_compliance(_dpp_payload_full())
     assert compliance["is_compliant"] is True
-    assert compliance["compliance_score"] >= 95
-    assert compliance["compliance_level"] in {"high", "full"}
+    assert compliance["compliance_score"] == 100
+    assert compliance["compliance_level"] == "full"
     assert compliance["required_missing"] == []
 
     epcis = format_as_epcis(_dpp_payload_full())
@@ -211,69 +210,70 @@ def test_brand_registration_accepts_extended_fields():
 
 
 def test_dpp_creation_with_extended_fields_and_access_levels():
-    brand = client.post(
-        "/proofmint/brands/register",
-        json={"name": "Aegis Brand 4", "email": "brand4@proofmint.test", "plan": "business"},
-    ).json()
-    client.post(
-        "/proofmint/products",
-        json={"product_id": "SKU-004", "product_name": "Luxury Balm", "category": "skincare"},
-        headers={"X-API-Key": brand["api_key"]},
-    )
+    os.environ["PROOFMINT_ALLOW_SCOPE_HEADER"] = "true"
+    try:
+        brand = client.post(
+            "/proofmint/brands/register",
+            json={"name": "Aegis Brand 4", "email": "brand4@proofmint.test", "plan": "business"},
+        ).json()
+        client.post(
+            "/proofmint/products",
+            json={"product_id": "SKU-004", "product_name": "Luxury Balm", "category": "skincare"},
+            headers={"X-API-Key": brand["api_key"]},
+        )
 
-    payload = _dpp_payload_full()
-    payload["productId"] = "SKU-004"
-    payload["productName"] = "Luxury Balm"
-    payload["brand_name"] = "Aegis Brand 4"
+        payload = _dpp_payload_full()
+        payload["productId"] = "SKU-004"
+        payload["productName"] = "Luxury Balm"
+        payload["brand_name"] = "Aegis Brand 4"
 
-    create_resp = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
-    assert create_resp.status_code == 201, create_resp.text
-    created = create_resp.json()
-    assert created["materials_detailed"][0]["name"] == "glass"
-    assert created["hazardous_substances"] == ["Substance-A"]
-    assert created["test_reports_urls"] == ["https://example.com/report-1.pdf"]
-    assert created["model_variant"] == "2026-A"
+        create_resp = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
+        assert create_resp.status_code == 201, create_resp.text
+        created = create_resp.json()
+        assert created["materials_detailed"][0]["name"] == "glass"
+        assert created["hazardous_substances"] == ["Substance-A"]
+        assert created["test_reports_urls"] == ["https://example.com/report-1.pdf"]
+        assert created["model_variant"] == "2026-A"
 
-    public_resp = client.get("/proofmint/verify/SKU-004")
-    assert public_resp.status_code == 200
-    public_data = public_resp.json()["passport_data"]
-    assert "hazardous_substances" not in public_data
-    assert "eori_number" not in public_data
-    assert "facility_id" not in public_data
-    assert "test_reports_urls" not in public_data
+        public_resp = client.get("/proofmint/verify/SKU-004")
+        assert public_resp.status_code == 200
+        public_data = public_resp.json()["passport_data"]
+        assert "hazardous_substances" not in public_data
+        assert "eori_number" not in public_data
+        assert "facility_id" not in public_data
+        assert "test_reports_urls" not in public_data
 
-    full_unauthorized = client.get("/proofmint/verify/SKU-004/full")
-    assert full_unauthorized.status_code == 401
+        full_unauthorized = client.get("/proofmint/verify/SKU-004/full")
+        assert full_unauthorized.status_code == 401
 
-    full_resp = client.get("/proofmint/verify/SKU-004/full", headers={"X-Viewing-Key-Scope": "regulator"})
-    assert full_resp.status_code == 200, full_resp.text
-    full_data = full_resp.json()["passport_data"]
-    assert full_data["hazardous_substances"] == ["Substance-A"]
-    assert full_data["eori_number"] == "IT1234567890"
-    assert full_data["facility_id"] == "FAC-001"
+        full_resp = client.get("/proofmint/verify/SKU-004/full", headers={"X-Viewing-Key-Scope": "regulator"})
+        assert full_resp.status_code == 200, full_resp.text
+        full_data = full_resp.json()["passport_data"]
+        assert full_data["hazardous_substances"] == ["Substance-A"]
+        assert full_data["eori_number"] == "IT1234567890"
+        assert full_data["facility_id"] == "FAC-001"
 
-    recycler_resp = client.get("/proofmint/verify/SKU-004/recycler", headers={"X-Viewing-Key-Scope": "recycler"})
-    assert recycler_resp.status_code == 200, recycler_resp.text
-    recycler_data = recycler_resp.json()["passport_data"]
-    assert recycler_data["materials_detailed"][0]["name"] == "glass"
-    assert recycler_data["hazardous_substances"] == ["Substance-A"]
-    assert recycler_data["disassembly_instructions"] == "Separate cap and bottle"
-    assert "eori_number" not in recycler_data
-    assert "operator_address" not in recycler_data
+        recycler_resp = client.get("/proofmint/verify/SKU-004/recycler", headers={"X-Viewing-Key-Scope": "recycler"})
+        assert recycler_resp.status_code == 200, recycler_resp.text
+        recycler_data = recycler_resp.json()["passport_data"]
+        assert recycler_data["materials_detailed"][0]["name"] == "glass"
+        assert recycler_data["hazardous_substances"] == ["Substance-A"]
+        assert recycler_data["disassembly_instructions"] == "Separate cap and bottle"
+        assert "eori_number" not in recycler_data
+        assert "operator_address" not in recycler_data
+    finally:
+        os.environ.pop("PROOFMINT_ALLOW_SCOPE_HEADER", None)
 
 
 def test_compliance_validation_multi_category_scoring():
-    minimal_payload = _dpp_payload()
-    minimal_payload["model_variant"] = None
-    minimal_payload["operator_type"] = None
-    minimal_payload["recyclability_percent"] = None
-
-    compliance = validate_compliance(minimal_payload)
+    compliance = validate_compliance(_dpp_payload())
     assert compliance["is_compliant"] is False
     assert "model_variant" in compliance["required_missing"]
     assert "operator_type" in compliance["required_missing"]
     assert "recyclability_percent" in compliance["required_missing"]
     assert "identity" in compliance["categories"]
+    assert compliance["compliance_score"] < 85
+    assert compliance["compliance_level"] in {"critical", "low", "medium"}
 
 
 def test_backward_compatibility_original_dpp_payload_still_works():
@@ -298,3 +298,25 @@ def test_backward_compatibility_original_dpp_payload_still_works():
     assert body["productId"] == "SKU-005"
     assert body["materials_detailed"] == []
     assert body["hazardous_substances"] == []
+
+
+def test_scope_header_requires_feature_flag():
+    brand = client.post(
+        "/proofmint/brands/register",
+        json={"name": "Aegis Brand 6", "email": "brand6@proofmint.test", "plan": "free"},
+    ).json()
+    client.post(
+        "/proofmint/products",
+        json={"product_id": "SKU-006", "product_name": "Flag Test", "category": "skincare"},
+        headers={"X-API-Key": brand["api_key"]},
+    )
+    payload = _dpp_payload()
+    payload["productId"] = "SKU-006"
+    payload["productName"] = "Flag Test"
+    payload["brand_name"] = "Aegis Brand 6"
+    create_resp = client.post("/proofmint/dpp/create", json=payload, headers={"X-API-Key": brand["api_key"]})
+    assert create_resp.status_code == 201, create_resp.text
+
+    os.environ.pop("PROOFMINT_ALLOW_SCOPE_HEADER", None)
+    blocked = client.get("/proofmint/verify/SKU-006/full", headers={"X-Viewing-Key-Scope": "regulator"})
+    assert blocked.status_code == 401
