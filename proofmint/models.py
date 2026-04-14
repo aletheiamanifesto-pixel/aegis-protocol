@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import relationship
 
 from db import Base
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 
 class Brand(Base):
@@ -15,7 +19,7 @@ class Brand(Base):
     api_key = Column(String(128), unique=True, nullable=False, index=True)
     plan = Column(String(20), nullable=False, default="free")
     products_count = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
 
     products = relationship("Product", back_populates="brand", cascade="all, delete-orphan")
 
@@ -28,7 +32,7 @@ class Product(Base):
     product_name = Column(String(255), nullable=False)
     category = Column(String(80), nullable=False)
     brand_id = Column(Integer, ForeignKey("proofmint_brands.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
 
     brand = relationship("Brand", back_populates="products")
     passports = relationship("DigitalProductPassport", back_populates="product", cascade="all, delete-orphan")
@@ -49,7 +53,7 @@ class DigitalProductPassport(Base):
     certifications_json = Column(JSON, nullable=False, default=list)
     recycling_instructions = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
     product = relationship("Product", back_populates="passports")

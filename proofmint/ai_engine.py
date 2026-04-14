@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import httpx
@@ -6,6 +7,7 @@ import httpx
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+logger = logging.getLogger(__name__)
 
 
 def auto_fill_dpp(document_text: str) -> dict:
@@ -41,6 +43,7 @@ def auto_fill_dpp(document_text: str) -> dict:
             return {}
         return json.loads(content[start:end + 1])
     except Exception:
+        logger.exception("OpenAI auto-fill request failed")
         return {}
 
 

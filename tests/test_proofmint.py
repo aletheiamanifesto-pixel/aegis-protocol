@@ -23,12 +23,12 @@ _TEST_ENGINE = create_engine(
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
-_TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_TEST_ENGINE)
+_TEST_SESSION_LOCAL = sessionmaker(autocommit=False, autoflush=False, bind=_TEST_ENGINE)
 Base.metadata.create_all(bind=_TEST_ENGINE)
 
 
 def _get_test_db():
-    db = _TestingSessionLocal()
+    db = _TEST_SESSION_LOCAL()
     try:
         yield db
     finally:

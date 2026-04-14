@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -9,6 +10,7 @@ PINATA_JWT = os.getenv("PINATA_JWT", "")
 PINATA_API_KEY = os.getenv("PINATA_API_KEY", "")
 PINATA_SECRET_API_KEY = os.getenv("PINATA_SECRET_API_KEY", "")
 _LOCAL_STORE = Path("/tmp/proofmint_ipfs")
+logger = logging.getLogger(__name__)
 
 
 def _local_store_data(data: dict) -> str:
@@ -38,7 +40,7 @@ def upload_to_ipfs(data: dict) -> str:
             r.raise_for_status()
             return r.json().get("IpfsHash", "")
         except Exception:
-            pass
+            logger.exception("Pinata upload failed, falling back to local storage")
 
     return _local_store_data(data)
 
@@ -55,4 +57,5 @@ def get_from_ipfs(cid: str) -> dict:
         r.raise_for_status()
         return r.json()
     except Exception:
+        logger.exception("IPFS retrieval failed for cid=%s", cid)
         return {}

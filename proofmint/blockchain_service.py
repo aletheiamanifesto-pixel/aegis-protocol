@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 import time
 
@@ -44,6 +45,7 @@ _PROOFMINT_ABI_MINIMAL = [
         "stateMutability": "view",
     },
 ]
+logger = logging.getLogger(__name__)
 
 
 def _mock_tx_hash(payload: dict) -> str:
@@ -74,7 +76,8 @@ def create_passport_onchain(product_id: str, dpp_hash: str, ipfs_cid: str) -> st
         acct = w3.eth.account.from_key(PROOFMINT_PRIVATE_KEY)
         contract = _contract(w3)
 
-        tx = contract.functions.createPassport(product_id, dpp_hash, ipfs_cid).build_transaction(
+        dpp_hash_bytes = Web3.to_bytes(hexstr=dpp_hash)
+        tx = contract.functions.createPassport(product_id, dpp_hash_bytes, ipfs_cid).build_transaction(
             {
                 "from": acct.address,
                 "nonce": w3.eth.get_transaction_count(acct.address),
@@ -88,6 +91,7 @@ def create_passport_onchain(product_id: str, dpp_hash: str, ipfs_cid: str) -> st
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
         return tx_hash.hex()
     except Exception:
+        logger.exception("ProofMint createPassport on-chain call failed, using mock tx hash")
         return _mock_tx_hash({"op": "create", "product_id": product_id, "dpp_hash": dpp_hash, "ipfs_cid": ipfs_cid})
 
 
@@ -100,8 +104,10 @@ def verify_passport_onchain(passport_id: int, expected_hash: str) -> bool:
         if not w3.is_connected():
             return True
         contract = _contract(w3)
-        return bool(contract.functions.verifyPassport(passport_id, expected_hash).call())
+        expected_hash_bytes = Web3.to_bytes(hexstr=expected_hash)
+        return bool(contract.functions.verifyPassport(passport_id, expected_hash_bytes).call())
     except Exception:
+        logger.exception("ProofMint verifyPassport on-chain call failed; returning mock-success")
         return True
 
 
@@ -117,7 +123,8 @@ def update_passport_onchain(passport_id: int, new_hash: str, new_ipfs_cid: str) 
         acct = w3.eth.account.from_key(PROOFMINT_PRIVATE_KEY)
         contract = _contract(w3)
 
-        tx = contract.functions.updatePassport(passport_id, new_hash, new_ipfs_cid).build_transaction(
+        new_hash_bytes = Web3.to_bytes(hexstr=new_hash)
+        tx = contract.functions.updatePassport(passport_id, new_hash_bytes, new_ipfs_cid).build_transaction(
             {
                 "from": acct.address,
                 "nonce": w3.eth.get_transaction_count(acct.address),
@@ -131,4 +138,5 @@ def update_passport_onchain(passport_id: int, new_hash: str, new_ipfs_cid: str) 
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
         return tx_hash.hex()
     except Exception:
+        logger.exception("ProofMint updatePassport on-chain call failed, using mock tx hash")
         return _mock_tx_hash({"op": "update", "passport_id": passport_id, "new_hash": new_hash, "new_ipfs_cid": new_ipfs_cid})

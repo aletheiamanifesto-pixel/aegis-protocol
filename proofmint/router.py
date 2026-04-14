@@ -1,7 +1,7 @@
 import hashlib
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import desc
@@ -93,9 +93,9 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/products", status_code=201)
-def create_product(payload: ProductCreate, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def create_product(payload: ProductCreate, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
 
     existing = db.query(Product).filter(Product.product_id == payload.product_id).first()
     if existing:
@@ -122,9 +122,9 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db), x_api_
 
 
 @router.post("/dpp/create", response_model=DPPResponse, status_code=201)
-def create_dpp(payload: DPPCreate, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def create_dpp(payload: DPPCreate, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
 
     product = db.query(Product).filter(Product.product_id == payload.productId, Product.brand_id == brand.id).first()
     if not product:
@@ -208,9 +208,9 @@ def verify_product_dpp(product_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/dpp/{dpp_id}", response_model=DPPResponse)
-def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
 
     dpp = db.query(DigitalProductPassport).filter(DigitalProductPassport.id == dpp_id).first()
     if not dpp:
@@ -234,7 +234,7 @@ def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), x
     dpp.carbon_footprint_kg = payload.carbon_footprint_kg
     dpp.certifications_json = payload.certifications
     dpp.recycling_instructions = payload.recycling_instructions
-    dpp.updated_at = datetime.utcnow()
+    dpp.updated_at = datetime.now(timezone.utc)
 
     product.product_name = payload.productName
     product.category = payload.category
@@ -246,9 +246,9 @@ def update_dpp(dpp_id: int, payload: DPPCreate, db: Session = Depends(get_db), x
 
 
 @router.delete("/dpp/{dpp_id}")
-def revoke_dpp(dpp_id: int, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def revoke_dpp(dpp_id: int, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
 
     dpp = db.query(DigitalProductPassport).filter(DigitalProductPassport.id == dpp_id).first()
     if not dpp:
@@ -259,16 +259,16 @@ def revoke_dpp(dpp_id: int, db: Session = Depends(get_db), x_api_key: str | None
         raise HTTPException(status_code=403, detail="Not allowed")
 
     dpp.is_active = False
-    dpp.updated_at = datetime.utcnow()
+    dpp.updated_at = datetime.now(timezone.utc)
     db.commit()
 
     return {"status": "revoked", "dpp_id": dpp_id}
 
 
 @router.get("/brands/{brand_id}/products")
-def list_brand_products(brand_id: int, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def list_brand_products(brand_id: int, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
     if brand.id != brand_id:
         raise HTTPException(status_code=403, detail="Not allowed")
 
@@ -286,9 +286,9 @@ def list_brand_products(brand_id: int, db: Session = Depends(get_db), x_api_key:
 
 
 @router.get("/brands/{brand_id}/stats")
-def brand_stats(brand_id: int, db: Session = Depends(get_db), x_api_key: str | None = Header(default=None)):
+def brand_stats(brand_id: int, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
-    brand = _get_brand_by_key(db, x_api_key)
+    brand = _get_brand_by_key(db, api_key)
     if brand.id != brand_id:
         raise HTTPException(status_code=403, detail="Not allowed")
 
