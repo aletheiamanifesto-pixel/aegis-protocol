@@ -184,6 +184,53 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 | `POST` | `/api/v1/bridge/initiate` | Initiate cross-chain bridge transfer |
 | `GET`  | `/api/v1/bridge/status/{request_id}` | Bridge transfer status |
 
+### ProofMint — Digital Product Passport
+
+ProofMint is a self-service module for creating ESPR-aligned Digital Product Passports (DPP), storing payloads on IPFS, and anchoring hashes on-chain (Polygon-compatible).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/proofmint/brands/register` | Register a brand and issue API key |
+| `POST` | `/proofmint/products` | Create a product under a brand |
+| `POST` | `/proofmint/dpp/create` | Create DPP (hash + IPFS + on-chain registration) |
+| `GET`  | `/proofmint/dpp/{dpp_id}` | Get DPP details |
+| `GET`  | `/proofmint/verify/{product_id}` | Public verification endpoint |
+| `PUT`  | `/proofmint/dpp/{dpp_id}` | Update DPP (version bump) |
+| `DELETE` | `/proofmint/dpp/{dpp_id}` | Revoke/deactivate DPP |
+| `GET` | `/proofmint/brands/{brand_id}/products` | List brand products |
+| `GET` | `/proofmint/brands/{brand_id}/stats` | Basic analytics (products/scans/compliance) |
+
+Quick start:
+
+```bash
+# 1) Register brand
+curl -X POST http://localhost:8000/proofmint/brands/register \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name":"Luxe Atelier","email":"ops@luxe.example","plan":"pro"}'
+
+# 2) Create product (use returned API key)
+curl -X POST http://localhost:8000/proofmint/products \\
+  -H 'Content-Type: application/json' -H 'X-API-Key: <API_KEY>' \\
+  -d '{"product_id":"SKU-001","product_name":"Luxe Serum","category":"skincare"}'
+
+# 3) Create DPP
+curl -X POST http://localhost:8000/proofmint/dpp/create \\
+  -H 'Content-Type: application/json' -H 'X-API-Key: <API_KEY>' \\
+  -d '{"productId":"SKU-001","productName":"Luxe Serum","category":"skincare","materials":["glass"],"origin_country":"IT","certifications":["COSMOS"],"brand_name":"Luxe Atelier"}'
+
+# 4) Verify publicly
+curl http://localhost:8000/proofmint/verify/SKU-001
+```
+
+```mermaid
+flowchart LR
+    B[Brand] -->|/proofmint/* API| P[ProofMint Router]
+    P --> H[SHA-256 DPP Hash]
+    P --> I[IPFS Storage]
+    P --> C[ProofMintRegistry.sol]
+    C --> V[Public Verify Endpoint]
+```
+
 ---
 
 ## Project Structure
@@ -213,6 +260,7 @@ aegis-protocol/
 ├── noir_bridge.py               # Python → Noir proof system bridge
 ├── db.py / db_models.py         # SQLAlchemy ORM (PostgreSQL)
 ├── models.py                    # Domain models (ScopeType, etc.)
+├── proofmint/                   # DPP SaaS module (router, models, AI, IPFS, GS1)
 ├── bundler/                     # Transaction bundler + Merkle tree
 ├── bridge/                      # Cross-chain bridge manager
 ├── settlement/                  # On-chain settlement service
@@ -223,7 +271,8 @@ aegis-protocol/
 │   ├── AegisEUR.sol
 │   ├── AegisVault.sol
 │   ├── AegisBundleVerifier.sol
-│   └── NoirVerifier.sol
+│   ├── NoirVerifier.sol
+│   └── ProofMintRegistry.sol
 ├── noir_circuits/               # Noir ZK circuits
 │   ├── balance_proof/
 │   ├── transfer_proof/
