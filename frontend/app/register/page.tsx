@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useState } from "react";
 
 import { Header } from "@/components/header";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,18 @@ import { Select } from "@/components/ui/select";
 import { registerBrand } from "@/lib/api";
 
 export default function RegisterPage() {
-  const searchParams = useSearchParams();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [plan, setPlan] = useState(searchParams.get("plan") === "pro" ? "pro" : "free");
+  const [plan, setPlan] = useState("free");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("plan") === "pro") {
+      setPlan("pro");
+    }
+  }, []);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();

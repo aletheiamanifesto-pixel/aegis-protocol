@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
@@ -20,13 +20,12 @@ function parseTags(value: string) {
 }
 
 export default function CreateDppPage() {
-  const searchParams = useSearchParams();
   const router = useRouter();
   const brandId = typeof window !== "undefined" ? Number(localStorage.getItem("hala_brand_id") || 0) : 0;
   const brandName = typeof window !== "undefined" ? localStorage.getItem("hala_brand_name") || "" : "";
 
   const [form, setForm] = useState<DPPCreateInput>({
-    productId: searchParams.get("productId") || "",
+    productId: "",
     productName: "",
     category: "Skincare",
     materials: [],
@@ -37,6 +36,14 @@ export default function CreateDppPage() {
     hazardous_substances: [],
     test_reports_urls: []
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const productId = params.get("productId");
+    if (productId) {
+      setForm((prev) => ({ ...prev, productId }));
+    }
+  }, []);
 
   const productsQuery = useQuery({ queryKey: ["dpp-products", brandId], queryFn: () => listBrandProducts(brandId), enabled: !!brandId });
 
