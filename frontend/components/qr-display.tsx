@@ -1,15 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { Copy, Download } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
 export function QrDisplay({ verifyUrl }: { verifyUrl: string }) {
   const qrUrl = `https://quickchart.io/qr?size=240&text=${encodeURIComponent(verifyUrl)}`;
+  const [copied, setCopied] = useState(false);
 
   const copy = async () => {
     await navigator.clipboard.writeText(verifyUrl);
-    window.alert("Link copiato");
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -26,6 +29,7 @@ export function QrDisplay({ verifyUrl }: { verifyUrl: string }) {
           <Copy className="mr-2 h-4 w-4" /> Copia Link
         </Button>
       </div>
+      {copied && <p className="text-center text-xs text-emerald-700">Link copiato</p>}
     </div>
   );
 }

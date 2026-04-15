@@ -47,7 +47,19 @@ export default function CreateDppPage() {
 
   const productsQuery = useQuery({ queryKey: ["dpp-products", brandId], queryFn: () => listBrandProducts(brandId), enabled: !!brandId });
 
-  const requiredFields = ["productId", "productName", "materials", "origin_country", "operator_type", "certifications", "carbon_footprint_kg", "expected_lifetime_years", "recycling_instructions", "recyclability_percent", "model_variant"] as const;
+  const requiredFields = [
+    "productId",
+    "productName",
+    "materials",
+    "origin_country",
+    "operator_type",
+    "certifications",
+    "carbon_footprint_kg",
+    "expected_lifetime_years",
+    "recycling_instructions",
+    "recyclability_percent",
+    "model_variant"
+  ] as const;
 
   const compliance = useMemo(() => {
     const missing = requiredFields.filter((key) => {

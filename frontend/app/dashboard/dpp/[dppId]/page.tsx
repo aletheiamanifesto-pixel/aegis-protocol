@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { QrDisplay } from "@/components/qr-display";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,8 @@ import { getDPP, revokeDPP } from "@/lib/api";
 
 export default function DppDetailPage() {
   const params = useParams<{ dppId: string }>();
-  const router = useRouter();
   const dppId = Number(params.dppId);
+  const [statusMessage, setStatusMessage] = useState("");
 
   const dppQuery = useQuery({ queryKey: ["dpp", dppId], queryFn: () => getDPP(dppId), enabled: !!dppId });
 
@@ -58,8 +59,7 @@ export default function DppDetailPage() {
               onClick={async () => {
                 if (!window.confirm("Revocare questo DPP?")) return;
                 await revokeDPP(dppId);
-                window.alert("DPP revocato");
-                router.push("/dashboard");
+                setStatusMessage("DPP revocato");
               }}
               variant="destructive"
             >
@@ -67,6 +67,7 @@ export default function DppDetailPage() {
             </Button>
             <Link href={`/verify/${dpp.productId}`} target="_blank"><Button>👁️ Anteprima Consumer</Button></Link>
           </div>
+          {statusMessage && <p className="mt-2 text-sm text-emerald-700">{statusMessage}</p>}
         </CardContent>
       </Card>
     </div>
