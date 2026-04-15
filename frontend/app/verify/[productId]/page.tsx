@@ -17,8 +17,9 @@ async function getVerification(productId: string) {
   }
 }
 
-export default async function VerifyPage({ params }: { params: { productId: string } }) {
-  const verify = await getVerification(params.productId);
+export default async function VerifyPage({ params }: { params: Promise<{ productId: string }> }) {
+  const { productId } = await params;
+  const verify = await getVerification(productId);
   const data = verify.passport_data || {};
 
   if (!verify.is_valid) {
