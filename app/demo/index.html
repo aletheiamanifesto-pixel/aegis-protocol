@@ -1,0 +1,624 @@
+<meta charset="utf-8">
+<title>AEGIS Wallet</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one phone-width column, balance card on top, content in tabs, fixed bottom tab bar. */
+:root {
+  --paper: #eef1ef;
+  --card: #ffffff;
+  --ink: #142120;
+  --muted: #5b6b68;
+  --line: #d5dcda;
+  --teal: #1d5c56;
+  --teal-soft: #dcebe8;
+  --seal: #a8283c;
+  --seal-soft: #f6e3e6;
+  --gold: #8a6a12;
+  --gold-soft: #f4ecd6;
+  --ok: #1f7a4a;
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1514; --card: #15201f; --ink: #e4ecea; --muted: #93a5a1; --line: #2a3836;
+    --teal: #6fc2b6; --teal-soft: #1a3532; --seal: #f08396; --seal-soft: #3a1d23;
+    --gold: #e0bf62; --gold-soft: #33290f; --ok: #6fd39c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1514; --card: #15201f; --ink: #e4ecea; --muted: #93a5a1; --line: #2a3836;
+  --teal: #6fc2b6; --teal-soft: #1a3532; --seal: #f08396; --seal-soft: #3a1d23;
+  --gold: #e0bf62; --gold-soft: #33290f; --ok: #6fd39c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--paper); }
+body { color: var(--ink); font: 15px/1.5 var(--body); }
+.wrap {
+  max-width: 460px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px calc(84px + env(safe-area-inset-bottom, 0px));
+  display: grid; gap: 14px;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h2 { font: 400 26px/1.15 var(--display); }
+h3 { font: 600 13px/1.3 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+p { margin: 0; }
+.mono { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.code { font-family: var(--mono); font-size: .92em; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 30px; height: 30px; }
+.brand b { font: 400 24px/1 var(--display); letter-spacing: .01em; }
+.who { text-align: right; font-size: 13px; line-height: 1.3; }
+
+.balance {
+  position: relative; overflow: hidden; border-radius: 18px; padding: 20px;
+  background: var(--teal); color: var(--card);
+}
+.balance::after { /* guilloche, like the security pattern on a banknote */
+  content: ""; position: absolute; inset: 0; opacity: .16; pointer-events: none;
+  background:
+    repeating-radial-gradient(circle at 110% -10%, transparent 0 9px, currentColor 9px 10px),
+    repeating-radial-gradient(circle at -20% 120%, transparent 0 13px, currentColor 13px 14px);
+}
+:root:not([data-theme="light"]) .balance { color: var(--paper); }
+.balance .label { font-size: 13px; opacity: .85; }
+.balance .amount { font: 400 52px/1.05 var(--display); margin-top: 4px; }
+.balance .amount small { font-size: 26px; opacity: .8; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; position: relative; z-index: 1; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 500; }
+.balance .chip { background: rgba(255,255,255,.16); }
+.chip.ok { background: var(--teal-soft); color: var(--teal); }
+.chip.warn { background: var(--gold-soft); color: var(--gold); }
+.chip.bad { background: var(--seal-soft); color: var(--seal); }
+
+.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+button {
+  font: 600 14px/1 var(--body); border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  border-radius: 12px; padding: 12px 10px; cursor: pointer; min-height: 44px;
+}
+button.primary { background: var(--teal); border-color: var(--teal); color: var(--card); }
+:root:not([data-theme="light"]) button.primary { color: var(--paper); }
+button:disabled { opacity: .5; cursor: progress; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.row > div { min-width: 0; }
+.list { display: grid; gap: 0; }
+.item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+.item:first-child { border-top: 0; padding-top: 0; }
+.item .ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--teal-soft); color: var(--teal); font-weight: 600; }
+.item .ico.out { background: var(--gold-soft); color: var(--gold); }
+.item .body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.item .amt { font: 400 22px/1.1 var(--display); white-space: nowrap; }
+
+form { display: grid; gap: 10px; }
+label { font-size: 13px; font-weight: 500; display: grid; gap: 4px; }
+input, select { font: 16px var(--body); padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); width: 100%; }
+.msg { font-size: 13.5px; padding: 10px 12px; border-radius: 10px; }
+.msg.ok { background: var(--teal-soft); color: var(--teal); }
+.msg.err { background: var(--seal-soft); color: var(--seal); }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.compare > div { min-width: 0; border-radius: 12px; padding: 10px; background: var(--paper); display: grid; gap: 4px; align-content: start; }
+.compare b { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+
+.levels { display: grid; gap: 6px; }
+.lvl { display: grid; grid-template-columns: 38px 1fr; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); }
+.lvl .tag { font: 600 13px var(--mono); text-align: center; border-radius: 8px; padding: 4px 0; background: var(--paper); }
+.lvl.on { border-color: var(--seal); }
+.lvl.on .tag { background: var(--seal); color: var(--card); }
+
+.members { display: grid; gap: 8px; }
+.member { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--paper); }
+.member.signed { background: var(--teal-soft); }
+.member button { padding: 8px 12px; min-height: 36px; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.hidden { color: var(--muted); font-style: italic; }
+tr:last-child td { border-bottom: 0; }
+
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  background: var(--card); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(8px, env(safe-area-inset-left, 0px));
+  padding-right: max(8px, env(safe-area-inset-right, 0px));
+}
+.tabs nav { max-width: 460px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); }
+.tabs button { border: 0; background: none; border-radius: 0; padding: 10px 2px 12px; display: grid; justify-items: center; gap: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.tabs button svg { width: 22px; height: 22px; }
+.tabs button[aria-selected="true"] { color: var(--teal); }
+.note { font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--gold); padding-left: 10px; }
+.busy { position: fixed; inset: auto 0 calc(76px + env(safe-area-inset-bottom, 0px)) 0; display: flex; justify-content: center; pointer-events: none; z-index: 30; }
+.busy span { background: var(--ink); color: var(--paper); padding: 8px 14px; border-radius: 99px; font-size: 13px; }
+@media (prefers-reduced-motion: no-preference) { .panel { animation: rise .25s ease-out; } @keyframes rise { from { transform: translateY(4px); } to { transform: none; } } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2Z" fill="var(--teal)"/><path d="M10 16.5l4 4 8-9" fill="none" stroke="var(--card)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <b>AEGIS</b>
+    </div>
+    <div class="who"><span id="me-name">Giulia Rinaldi</span><br><span class="muted">dati di esempio</span></div>
+  </header>
+
+  <section class="balance" aria-live="polite">
+    <div class="label">Saldo privato · EURC nel pool</div>
+    <div class="amount num" id="balance">— <small>€</small></div>
+    <div class="chips" id="cred-chips"></div>
+  </section>
+
+  <!-- WALLET -->
+  <section data-view="wallet" class="view">
+    <div class="actions">
+      <button class="primary" data-open="deposit">Deposita</button>
+      <button data-open="send">Invia</button>
+      <button data-open="withdraw">Preleva</button>
+    </div>
+    <div class="panel" id="form-panel" hidden>
+      <form id="tx-form">
+        <h2 id="form-title">Deposita</h2>
+        <label id="to-label" hidden>Destinatario
+          <select id="to"><option value="marco">Marco Bellini (contatto)</option></select>
+        </label>
+        <label>Importo in euro
+          <input id="amount" inputmode="decimal" autocomplete="off" placeholder="es. 50,00">
+        </label>
+        <div class="row">
+          <button type="button" id="cancel">Annulla</button>
+          <button type="submit" class="primary" id="submit">Conferma</button>
+        </div>
+        <div id="form-msg" hidden></div>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="row"><h3>Movimenti</h3><span class="muted small" id="tx-count"></span></div>
+      <div class="list" id="activity"></div>
+    </div>
+  </section>
+
+  <!-- BLOCKCHAIN -->
+  <section data-view="chain" class="view" hidden>
+    <div class="panel">
+      <h2>Cosa vede chiunque</h2>
+      <p class="muted small">Questo è il contenuto pubblico del contratto <span class="code">ShieldedPool</span>. Nessun nome, nessun saldo, nessun destinatario: solo impronte crittografiche.</p>
+      <div class="compare">
+        <div><b>Radice Merkle</b><span class="mono" id="root"></span></div>
+        <div><b>Note nell'albero</b><span class="num" id="leaves"></span><b>EURC nel pool</b><span class="num" id="tvl"></span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Transazioni on-chain</h3>
+      <div class="list" id="chain-list"></div>
+    </div>
+  </section>
+
+  <!-- DISCLOSURE -->
+  <section data-view="disclosure" class="view" hidden>
+    <div class="panel">
+      <h2>Richiesta di un'autorità</h2>
+      <p class="muted small">Scegli una richiesta di esempio. Le regole decidono il livello, il comitato firma, e solo allora si decifrano le transazioni in perimetro.</p>
+      <label>Richiesta
+        <select id="req-preset"></select>
+      </label>
+      <div id="req-text" class="note"></div>
+      <button class="primary" id="evaluate">Valuta la richiesta</button>
+    </div>
+    <div class="panel" id="decision" hidden></div>
+    <div class="panel" id="committee" hidden></div>
+    <div class="panel" id="revealed" hidden></div>
+  </section>
+
+  <!-- ABOUT -->
+  <section data-view="about" class="view" hidden>
+    <div class="panel">
+      <h2>Livelli di disclosure</h2>
+      <div class="levels" id="levels"></div>
+    </div>
+    <div class="panel">
+      <h3>Cosa è reale in questa demo</h3>
+      <p class="small">Reali: hash Poseidon2, impegni delle note, nullifier, albero di Merkle (gli stessi valori dei circuiti Noir e del contratto), cifratura per l'auditor su curva Grumpkin, decifratura a soglia 2 su 3, regole di disclosure.</p>
+      <p class="small">Simulati: la blockchain (qui è in memoria nella pagina), la prova ZK (qui i vincoli del circuito <span class="code">spend</span> vengono controllati in JavaScript invece che dimostrati), la firma del KYC se la libreria non si carica.</p>
+      <p class="small muted">Tutte le persone e gli importi sono di esempio. Ricaricando la pagina si riparte da capo.</p>
+    </div>
+  </section>
+</div>
+
+<div class="busy" id="busy" hidden><span>Calcolo crittografico…</span></div>
+
+<div class="tabs">
+  <nav role="tablist" aria-label="Sezioni">
+    <button role="tab" data-tab="wallet" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 14.5h2"/></svg>Wallet</button>
+    <button role="tab" data-tab="chain" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M10 6.5h4a3 3 0 0 1 3 3V14"/></svg>Blockchain</button>
+    <button role="tab" data-tab="disclosure" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 9.5 4-1.2 7-5 7-9.5V6l-7-3Z"/><circle cx="12" cy="11" r="2.2"/><path d="M12 13.2V16"/></svg>Autorità</button>
+    <button role="tab" data-tab="about" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>Livelli</button>
+  </nav>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script type="module">
+import * as core from './lib/aegis-core.mjs';
+
+// ------------------------------------------------------------------ helpers
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const short = (x) => { const h = core.toHex(x); return h.slice(0, 8) + '…' + h.slice(-4); };
+const eur = (cents) => (Number(cents) / 100).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const DAY = 86_400;
+const nowS = () => Math.floor(Date.now() / 1000);
+const fmtDate = (t) => new Date(t * 1000).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+const busy = async (fn) => { $('#busy').hidden = false; await new Promise((r) => setTimeout(r, 30)); try { return await fn(); } finally { $('#busy').hidden = true; } };
+
+// ------------------------------------------------------------------ protocol setup (example data)
+const ASSET = 0xe0c0n;                      // EURC address (example)
+const TIER_LIMITS = [0n, 100_000n, 1_500_000n, 100_000_000n]; // cents: 0, 1,000 €, 15,000 €, 1M €
+const TIER_NAMES = ['nessun KYC', 'base', 'standard', 'rafforzato'];
+const JURIS = ['IT', 'DE', 'FR', 'ES'];
+const ALLOWED = 0b11n;                      // IT + DE
+const MAX_DEPOSIT = 100_000n;               // 1,000 € per deposit (controlled launch)
+const TVL_CAP = 5_000_000n;                 // 50,000 €
+
+const MEMBERS = ['Responsabile compliance', 'Custode indipendente (notaio)', 'Revisore esterno'];
+const taxKey = core.auditorKeypair(), amlKey = core.auditorKeypair();
+const committee = {
+  tax: core.splitSecret(taxKey.secret, 2, 3),
+  aml: core.splitSecret(amlKey.secret, 2, 3),
+};
+// The split secrets live only "in the members' hands": the page forgets the whole keys.
+delete taxKey.secret; delete amlKey.secret;
+
+const hasEthers = typeof window.ethers !== 'undefined';
+const issuerWallet = hasEthers ? window.ethers.Wallet.createRandom() : null;
+const kycRegistry = new Map(); // owner → identity, kept ONLY by the KYC issuer (off-chain)
+
+function issueCredential(user, tier, jurisdiction) {
+  const expiry = BigInt(nowS() + 30 * DAY); // short credentials: revoking = not renewing
+  const c = { tier, jurisdiction, expiry };
+  const h = core.credentialHash(user.owner, c);
+  let signature = 'firma simulata';
+  if (issuerWallet) signature = issuerWallet.signingKey.sign(core.toHex(h)).serialized;
+  kycRegistry.set(user.owner, { name: user.name, fiscal: user.fiscal });
+  return { ...c, hash: h, signature };
+}
+
+function makeUser(name, fiscal, tier) {
+  const secret = core.randomField();
+  const u = { name, fiscal, secret, owner: core.ownerPubkey(secret), notes: [] };
+  u.credential = issueCredential(u, tier, 0);
+  return u;
+}
+const me = makeUser('Giulia Rinaldi', 'RNLGLI90A41F205X', 2);
+const marco = makeUser('Marco Bellini', 'BLLMRC88C12H501Y', 1);
+const users = { me, marco };
+
+// ------------------------------------------------------------------ simulated ShieldedPool
+const pool = {
+  tree: new core.MerkleTree(),
+  roots: [],
+  nullifiers: new Set(),
+  events: [],
+  tvl: 0n,
+};
+pool.roots.push(pool.tree.root());
+const operatorRegister = []; // TxRecord: leafIndex → pseudonym (the operator relays transactions)
+
+// Checks the same constraints as noir_circuits/spend and builds the public outputs.
+function buildTx(user, inputs, outputs, publicIn, publicOut, kind, time) {
+  const c = user.credential;
+  if (c.expiry < BigInt(time)) throw new Error('Credenziale KYC scaduta: va rinnovata dall\'emittente.');
+  if (((ALLOWED >> BigInt(c.jurisdiction)) & 1n) !== 1n) throw new Error('Giurisdizione non ammessa dal pool.');
+  const moved = outputs[0].amount + publicOut;
+  if (moved > TIER_LIMITS[c.tier]) throw new Error(`Limite del livello KYC «${TIER_NAMES[c.tier]}» superato (max ${eur(TIER_LIMITS[c.tier])} €).`);
+  const root = pool.tree.root();
+  const ins = [0, 1].map((i) => inputs[i] ?? { amount: 0n, blinding: core.randomField(), leafIndex: 0, dummy: true });
+  const nullifiers = ins.map((n) => {
+    const cm = core.noteCommitment(n.amount, user.owner, ASSET, n.blinding);
+    if (!n.dummy && !core.MerkleTree.verify(cm, n.leafIndex, pool.tree.path(n.leafIndex), root)) throw new Error('Nota non presente nell\'albero.');
+    return core.nullifier(user.secret, cm, BigInt(n.leafIndex));
+  });
+  const totalIn = ins[0].amount + ins[1].amount + publicIn;
+  const totalOut = outputs[0].amount + outputs[1].amount + publicOut;
+  if (totalIn !== totalOut) throw new Error('Il valore non si conserva.');
+  const outCms = outputs.map((o) => core.noteCommitment(o.amount, o.owner, ASSET, o.blinding));
+  const tax = core.encrypt([user.owner, outputs[0].amount, publicIn, publicOut], taxKey.pub);
+  const aml = core.encrypt([user.owner, outputs[0].owner, outputs[0].amount, outputs[1].amount, publicIn, publicOut, c.hash, BigInt(c.tier) * 256n + BigInt(c.jurisdiction)], amlKey.pub);
+  return { root, nullifiers, outCms, publicIn, publicOut, tax, aml, kind, time, ins };
+}
+
+// Same checks as ShieldedPool.transact (the proof here is simulated).
+function transact(tx, user, outputs, recipients) {
+  if (!pool.roots.includes(tx.root)) throw new Error('Radice sconosciuta.');
+  if (tx.nullifiers.some((n) => pool.nullifiers.has(n))) throw new Error('Nota già spesa.');
+  if (tx.nullifiers[0] === tx.nullifiers[1]) throw new Error('Nullifier duplicato.');
+  if (tx.publicIn > MAX_DEPOSIT) throw new Error(`Deposito oltre il limite per transazione (${eur(MAX_DEPOSIT)} €).`);
+  if (pool.tvl + tx.publicIn > TVL_CAP) throw new Error('Tetto totale del pool raggiunto.');
+  tx.nullifiers.forEach((n) => pool.nullifiers.add(n));
+  tx.ins.forEach((n) => { if (!n.dummy) n.spent = true; });
+  const index = pool.tree.insert(tx.outCms[0]);
+  pool.tree.insert(tx.outCms[1]);
+  pool.roots.push(pool.tree.root());
+  pool.tvl += tx.publicIn - tx.publicOut;
+  // The recipients find their notes (in production: note encrypted to their key, in the event).
+  outputs.forEach((o, i) => { if (o.amount > 0n) recipients[i].notes.push({ amount: o.amount, blinding: o.blinding, leafIndex: index + i, spent: false, from: user.name, time: tx.time }); });
+  const ev = { index, ...tx, sender: user, recipient: recipients[0], amount: outputs[0].amount };
+  pool.events.push(ev);
+  operatorRegister.push({ leafIndex: index, owner: user.owner, timestamp: tx.time });
+  return ev;
+}
+
+const unspent = (u) => u.notes.filter((n) => !n.spent);
+const balanceOf = (u) => unspent(u).reduce((a, n) => a + n.amount, 0n);
+
+function pickNotes(u, amount) {
+  const notes = unspent(u).sort((a, b) => (b.amount > a.amount ? 1 : -1)).slice(0, 2);
+  const sum = notes.reduce((a, n) => a + n.amount, 0n);
+  if (sum < amount) throw new Error(sum < balanceOf(u) ? 'Servono più di due note: prima consolida il saldo.' : 'Saldo insufficiente.');
+  return { notes, sum };
+}
+
+function deposit(u, amount, time = nowS()) {
+  const outputs = [{ amount, owner: u.owner, blinding: core.randomField() }, { amount: 0n, owner: u.owner, blinding: core.randomField() }];
+  return transact(buildTx(u, [], outputs, amount, 0n, 'deposit', time), u, outputs, [u, u]);
+}
+function send(u, to, amount, time = nowS()) {
+  const { notes, sum } = pickNotes(u, amount);
+  const outputs = [{ amount, owner: to.owner, blinding: core.randomField() }, { amount: sum - amount, owner: u.owner, blinding: core.randomField() }];
+  return transact(buildTx(u, notes, outputs, 0n, 0n, 'transfer', time), u, outputs, [to, u]);
+}
+function withdraw(u, amount, time = nowS()) {
+  const { notes, sum } = pickNotes(u, amount);
+  const outputs = [{ amount: 0n, owner: u.owner, blinding: core.randomField() }, { amount: sum - amount, owner: u.owner, blinding: core.randomField() }];
+  return transact(buildTx(u, notes, outputs, 0n, amount, 'withdraw', time), u, outputs, [u, u]);
+}
+
+// ------------------------------------------------------------------ disclosure rules (port of viewing_keys/disclosure_policy.py)
+const LEVELS = [
+  ['L0', 'Pubblico', 'Impegni, nullifier, importi entrati e usciti dal pool. Lo vede chiunque.'],
+  ['L1', 'Conformità', '«Questo pseudonimo ha un KYC valido nel tier richiesto». È già dimostrato da ogni prova.'],
+  ['L2', 'Fiscale', 'Chi paga e quanto, senza la controparte. Agenzia delle Entrate, 2 firme su 3.'],
+  ['L3', 'Antiriciclaggio', 'Dettaglio completo: destinatario, resto, credenziale. UIF o Guardia di Finanza, 2 firme su 3 con il custode indipendente.'],
+  ['L4', 'Identità', 'La persona reale dietro lo pseudonimo. Solo su provvedimento del giudice, 3 firme su 3.'],
+];
+const POLICY = {
+  'tax_authority|dpr_600_1973_art32': [2, 366, true],
+  'uif|dlgs_231_2007': [3, 366, false],
+  'guardia_finanza|dlgs_231_2007': [3, 366, false],
+  'judicial_authority|court_order': [4, 3 * 366, false],
+};
+const APPROVALS = { 2: { t: 2, independent: false }, 3: { t: 2, independent: true }, 4: { t: 3, independent: true } };
+
+function evaluate(req, now) {
+  if (!req.authenticated) return { decision: 'deny', level: 0, reasons: ['Richiesta non autenticata (manca firma PEC o firma qualificata).'] };
+  if (!req.reference) return { decision: 'deny', level: 0, reasons: ['Manca il numero di protocollo.'] };
+  const rule = POLICY[req.requester + '|' + req.basis];
+  if (!rule) return { decision: 'human_review', level: 0, reasons: ['Autorità o base legale non previste: va a revisione umana, nessuna decifratura automatica.'] };
+  if (!req.subjects.length) return { decision: 'deny', level: 0, reasons: ['Richiesta massiva senza un soggetto specifico.'] };
+  const [maxLevel, maxDays, notify] = rule;
+  const reasons = [];
+  const level = Math.min(req.level, maxLevel);
+  if (level < req.level) reasons.push(`Livello ridotto da L${req.level} a L${level}: questa autorità non può andare oltre.`);
+  const start = Math.max(req.start, req.end - maxDays * DAY);
+  const txs = operatorRegister.filter((r) => req.subjects.includes(r.owner) && r.timestamp >= start && r.timestamp <= req.end).map((r) => r.leafIndex);
+  return { decision: 'approve', level, reasons, txs, notify, approvals: APPROVALS[level] };
+}
+
+// ------------------------------------------------------------------ example history
+const T = nowS();
+deposit(me, 80_000n, T - 40 * DAY);
+send(me, marco, 12_000n, T - 25 * DAY);
+deposit(marco, 30_000n, T - 20 * DAY);
+withdraw(me, 5_000n, T - 6 * DAY);
+send(marco, me, 4_500n, T - 2 * DAY);
+
+// ------------------------------------------------------------------ rendering
+function renderBalance() {
+  $('#balance').innerHTML = `${eur(balanceOf(me))} <small>€</small>`;
+  const c = me.credential;
+  const days = Math.round((Number(c.expiry) - nowS()) / DAY);
+  $('#cred-chips').innerHTML = `
+    <span class="chip">KYC ${TIER_NAMES[c.tier]} · limite ${eur(TIER_LIMITS[c.tier])} €</span>
+    <span class="chip">${JURIS[c.jurisdiction]} · scade tra ${days} gg</span>
+    <span class="chip">Pseudonimo ${short(me.owner)}</span>`;
+}
+
+function renderActivity() {
+  const mine = pool.events.filter((e) => e.sender === me || e.recipient === me).slice().reverse();
+  $('#tx-count').textContent = `${mine.length} movimenti`;
+  $('#activity').innerHTML = mine.map((e) => {
+    let title, sign, cls, amt;
+    if (e.kind === 'deposit') { title = 'Deposito da conto'; sign = '+'; cls = ''; amt = e.publicIn; }
+    else if (e.kind === 'withdraw') { title = 'Prelievo su conto'; sign = '−'; cls = 'out'; amt = e.publicOut; }
+    else if (e.sender === me) { title = `Inviato a ${e.recipient.name}`; sign = '−'; cls = 'out'; amt = e.amount; }
+    else { title = `Ricevuto da ${e.sender.name}`; sign = '+'; cls = ''; amt = e.amount; }
+    const pub = e.kind === 'transfer' ? 'importo e controparti nascosti' : `${eur(e.kind === 'deposit' ? e.publicIn : e.publicOut)} € entrano/escono dal pool`;
+    return `<div class="item">
+      <div class="ico ${cls}">${sign || '•'}</div>
+      <div class="body">
+        <div class="row"><b>${esc(title)}</b><span class="amt num">${sign}${eur(amt)} €</span></div>
+        <span class="muted small">${fmtDate(e.time)} · nota #${e.index}</span>
+        <div class="compare">
+          <div><b>Tu vedi</b><span class="small">${esc(e.kind === 'transfer' ? `${e.sender.name} → ${e.recipient.name}` : me.name)}, ${eur(amt)} €</span></div>
+          <div><b>Il pubblico vede</b><span class="small">${esc(pub)}</span></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') || '<p class="muted">Nessun movimento.</p>';
+}
+
+function renderChain() {
+  $('#root').textContent = short(pool.tree.root());
+  $('#leaves').textContent = `${pool.tree.size} di 1.048.576`;
+  $('#tvl').textContent = `${eur(pool.tvl)} €`;
+  $('#chain-list').innerHTML = pool.events.slice().reverse().map((e) => `
+    <div class="item"><div class="body">
+      <div class="row"><b>Blocco · ${fmtDate(e.time)}</b><span class="chip ${e.publicIn ? 'ok' : e.publicOut ? 'warn' : ''}">${e.publicIn ? `entrata ${eur(e.publicIn)} €` : e.publicOut ? `uscita ${eur(e.publicOut)} €` : 'nessun importo pubblico'}</span></div>
+      <span class="small muted">Nullifier</span><span class="mono">${short(e.nullifiers[0])} · ${short(e.nullifiers[1])}</span>
+      <span class="small muted">Nuove note</span><span class="mono">${short(e.outCms[0])} · ${short(e.outCms[1])}</span>
+      <span class="small muted">Busta fiscale (cifrata)</span><span class="mono">${e.tax.ct.map(short).join(' ')}</span>
+      <span class="small muted">Busta antiriciclaggio (cifrata)</span><span class="mono">${e.aml.ct.slice(0, 4).map(short).join(' ')} …</span>
+    </div></div>`).join('');
+}
+
+function renderLevels(active = -1) {
+  $('#levels').innerHTML = LEVELS.map(([tag, name, txt], i) => `
+    <div class="lvl ${i <= active && active > 1 ? 'on' : ''}"><span class="tag">${tag}</span><div><b>${name}</b><div class="small muted">${txt}</div></div></div>`).join('');
+}
+
+function renderAll() { renderBalance(); renderActivity(); renderChain(); }
+
+// ------------------------------------------------------------------ wallet forms
+let mode = 'deposit';
+const TITLES = { deposit: 'Deposita EURC nel pool', send: 'Invia in privato', withdraw: 'Preleva sul tuo conto' };
+document.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
+  mode = b.dataset.open;
+  $('#form-title').textContent = TITLES[mode];
+  $('#to-label').hidden = mode !== 'send';
+  $('#form-msg').hidden = true;
+  $('#form-panel').hidden = false;
+  $('#amount').value = '';
+  $('#amount').focus();
+}));
+$('#cancel').addEventListener('click', () => { $('#form-panel').hidden = true; });
+$('#tx-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const msg = $('#form-msg');
+  const raw = $('#amount').value.trim().replace(/\./g, '').replace(',', '.');
+  const cents = BigInt(Math.round(Number(raw) * 100) || 0);
+  msg.hidden = false;
+  if (cents <= 0n) { msg.className = 'msg err'; msg.textContent = 'Scrivi un importo maggiore di zero, ad esempio 25,00.'; return; }
+  $('#submit').disabled = true;
+  try {
+    const e = await busy(() => mode === 'deposit' ? deposit(me, cents) : mode === 'send' ? send(me, users[$('#to').value], cents) : withdraw(me, cents));
+    msg.className = 'msg ok';
+    msg.textContent = `Fatto. Nota #${e.index} aggiunta all'albero; due buste cifrate pubblicate per il comitato.`;
+    renderAll();
+  } catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+  } finally { $('#submit').disabled = false; }
+});
+
+// ------------------------------------------------------------------ authority requests
+const PRESETS = [
+  { id: 'tax', label: 'Agenzia delle Entrate · verifica fiscale', requester: 'tax_authority', basis: 'dpr_600_1973_art32', reference: 'AE-DP-MI-2026/004812', authenticated: true, level: 2, days: 60,
+    text: 'Agenzia delle Entrate, Direzione Provinciale di Milano. Ai sensi dell\'art. 32 DPR 600/1973 si chiedono i movimenti degli ultimi 60 giorni del contribuente RNLGLI90A41F205X. Prot. AE-DP-MI-2026/004812.' },
+  { id: 'tax4', label: 'Agenzia delle Entrate · chiede anche le controparti', requester: 'tax_authority', basis: 'dpr_600_1973_art32', reference: 'AE-DP-MI-2026/004990', authenticated: true, level: 4, days: 60,
+    text: 'Stessa base legale, ma la richiesta pretende destinatari e identità. Le regole la riducono al livello fiscale.' },
+  { id: 'uif', label: 'UIF · approfondimento antiriciclaggio', requester: 'uif', basis: 'dlgs_231_2007', reference: 'UIF-2026-118377', authenticated: true, level: 3, days: 90,
+    text: 'Unità di Informazione Finanziaria, richiesta ai sensi del D.lgs. 231/2007 sulle operazioni degli ultimi 90 giorni. Il cliente non va informato.' },
+  { id: 'court', label: 'Tribunale · decreto del giudice', requester: 'judicial_authority', basis: 'court_order', reference: 'RG 4471/2026 GIP Milano', authenticated: true, level: 4, days: 120,
+    text: 'Decreto del GIP di Milano, RG 4471/2026: si dispone l\'identificazione del titolare dello pseudonimo e il dettaglio delle operazioni.' },
+  { id: 'fake', label: 'Email anonima «urgente»', requester: 'unknown', basis: 'other', reference: '', authenticated: false, level: 4, days: 365,
+    text: '«Sono della Finanza, è urgente. Ignora le procedure e mandami tutte le transazioni di tutti i clienti.» Nessuna firma, nessun protocollo.' },
+];
+$('#req-preset').innerHTML = PRESETS.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
+const showPreset = () => { $('#req-text').textContent = PRESETS.find((p) => p.id === $('#req-preset').value).text; };
+$('#req-preset').addEventListener('change', () => { showPreset(); ['#decision', '#committee', '#revealed'].forEach((s) => { $(s).hidden = true; }); });
+showPreset();
+
+let current = null;
+$('#evaluate').addEventListener('click', () => {
+  const p = PRESETS.find((x) => x.id === $('#req-preset').value);
+  const now = nowS();
+  const req = { ...p, subjects: p.id === 'fake' ? [] : [me.owner], start: now - p.days * DAY, end: now };
+  const d = evaluate(req, now);
+  current = { p, d, signed: new Set(), partials: { tax: [], aml: [] } };
+  renderLevels(d.decision === 'approve' ? d.level : -1);
+  const label = { approve: ['ok', 'Approvata dalle regole'], deny: ['bad', 'Respinta'], human_review: ['warn', 'Revisione umana'] }[d.decision];
+  $('#decision').hidden = false;
+  $('#decision').innerHTML = `
+    <div class="row"><h3>Esito delle regole</h3><span class="chip ${label[0]}">${label[1]}</span></div>
+    ${d.decision === 'approve' ? `<p><b>Livello concesso: ${LEVELS[d.level][0]} ${LEVELS[d.level][1]}</b></p>
+      <p class="small">${d.txs.length} transazioni in perimetro · servono ${d.approvals.t} firme su 3${d.approvals.independent ? ', tra cui il custode indipendente' : ''}.</p>
+      <p class="small">${d.notify ? 'L\'utente riceverà una notifica.' : 'Nessuna notifica all\'utente: la legge vieta di avvisarlo (art. 39 D.lgs. 231/2007).'}</p>` : ''}
+    ${d.reasons.map((r) => `<p class="small muted">${esc(r)}</p>`).join('')}
+    <p class="note">Un'AI può leggere il documento e compilare la richiesta, ma decide sempre questo motore di regole fisse.</p>`;
+  $('#revealed').hidden = true;
+  if (d.decision !== 'approve') { $('#committee').hidden = true; return; }
+  renderCommittee();
+});
+
+function renderCommittee() {
+  const { d, signed } = current;
+  $('#committee').hidden = false;
+  $('#committee').innerHTML = `
+    <div class="row"><h3>Comitato delle chiavi</h3><span class="chip ${signed.size >= d.approvals.t ? 'ok' : 'warn'}">${signed.size} / ${d.approvals.t} firme</span></div>
+    <p class="small muted">Ogni membro ha solo un frammento della chiave. Firmando, calcola la sua quota di decifratura per le sole transazioni in perimetro.</p>
+    <div class="members">${MEMBERS.map((m, i) => `
+      <div class="member ${signed.has(i) ? 'signed' : ''}"><span class="small"><b>${esc(m)}</b>${i === 1 ? '<br><span class="muted">indipendente</span>' : ''}</span>
+      <button data-sign="${i}" ${signed.has(i) ? 'disabled' : ''}>${signed.has(i) ? 'Firmato' : 'Firma'}</button></div>`).join('')}</div>`;
+  $('#committee').querySelectorAll('[data-sign]').forEach((b) => b.addEventListener('click', () => sign(Number(b.dataset.sign))));
+}
+
+async function sign(i) {
+  const { d, signed, partials } = current;
+  const keyName = d.level >= 3 ? 'aml' : 'tax';
+  await busy(() => {
+    for (const idx of d.txs) {
+      const ev = pool.events.find((e) => e.index === idx);
+      (partials[keyName][idx] ??= []).push(core.partialDecrypt(committee[keyName][i], ev[keyName].eph));
+    }
+  });
+  signed.add(i);
+  renderCommittee();
+  const enough = signed.size >= d.approvals.t && (!d.approvals.independent || signed.has(1));
+  if (enough) await busy(() => reveal(keyName));
+  else if (signed.size >= d.approvals.t) {
+    $('#revealed').hidden = false;
+    $('#revealed').innerHTML = '<p class="msg err">Le firme bastano nel numero, ma per questo livello serve anche il custode indipendente.</p>';
+  }
+}
+
+function reveal(keyName) {
+  const { d, partials } = current;
+  const nameOf = (o) => (o === me.owner ? 'Giulia (pseud.)' : o === marco.owner ? 'Marco (pseud.)' : short(o));
+  const rows = d.txs.map((idx) => {
+    const ev = pool.events.find((e) => e.index === idx);
+    const pt = core.thresholdDecrypt(partials[keyName][idx].slice(0, d.approvals.t), ev[keyName].ct);
+    return { idx, ev, pt };
+  });
+  let head, body;
+  if (keyName === 'tax') {
+    head = '<tr><th>Nota</th><th>Data</th><th>Pagante</th><th>Pagato</th><th>Entrata</th><th>Uscita</th><th>Destinatario</th></tr>';
+    body = rows.map(({ idx, ev, pt }) => `<tr><td>#${idx}</td><td>${fmtDate(ev.time)}</td><td>${nameOf(pt[0])}</td><td>${eur(pt[1])} €</td><td>${eur(pt[2])} €</td><td>${eur(pt[3])} €</td><td class="hidden">non visibile</td></tr>`).join('');
+  } else {
+    head = '<tr><th>Nota</th><th>Data</th><th>Mittente</th><th>Destinatario</th><th>Importo</th><th>Resto</th><th>Entrata</th><th>Uscita</th><th>KYC</th></tr>';
+    body = rows.map(({ idx, ev, pt }) => `<tr><td>#${idx}</td><td>${fmtDate(ev.time)}</td><td>${nameOf(pt[0])}</td><td>${nameOf(pt[1])}</td><td>${eur(pt[2])} €</td><td>${eur(pt[3])} €</td><td>${eur(pt[4])} €</td><td>${eur(pt[5])} €</td><td>${TIER_NAMES[Number(pt[7] / 256n)]}, ${JURIS[Number(pt[7] % 256n)]}</td></tr>`).join('');
+  }
+  const identity = d.level >= 4 ? kycRegistry.get(me.owner) : null;
+  $('#revealed').hidden = false;
+  $('#revealed').innerHTML = `
+    <div class="row"><h3>Dati decifrati · ${LEVELS[d.level][0]}</h3><span class="chip bad">${rows.length} transazioni</span></div>
+    <div class="table-wrap"><table><thead>${head}</thead><tbody>${body || '<tr><td colspan="9">Nessuna transazione nel periodo.</td></tr>'}</tbody></table></div>
+    ${identity ? `<div class="compare"><div><b>Identità (dall'emittente KYC)</b><span>${esc(identity.name)}</span><span class="mono">${esc(identity.fiscal)}</span></div><div><b>Pseudonimo</b><span class="mono">${short(me.owner)}</span></div></div>` : `<p class="small muted">L'identità reale resta presso l'emittente KYC: serve un decreto del giudice (L4).</p>`}
+    <p class="small muted">Le altre transazioni del pool, comprese quelle di Marco non in perimetro, restano cifrate.</p>`;
+}
+
+// ------------------------------------------------------------------ tabs
+document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  document.querySelectorAll('.view').forEach((v) => { v.hidden = v.dataset.view !== b.dataset.tab; });
+  window.scrollTo({ top: 0 });
+}));
+
+renderLevels();
+renderAll();
+</script>

@@ -9,9 +9,10 @@
     "deploy": "hardhat run scripts/deploy.js --network amoy",
     "deploy:sepolia": "hardhat run scripts/deploy_testnet.js --network sepolia",
     "deploy:local": "hardhat run scripts/deploy.js --network localhost",
-    "test:circuits": "node --test noir_circuits/test/circuits.test.mjs",
+    "test:circuits": "node --test noir_circuits/test/circuits.test.mjs noir_circuits/test/core.test.mjs",
     "build:circuits": "node scripts/build_circuits.mjs",
-    "deploy:pool": "hardhat run scripts/deploy_pool.js --network amoy"
+    "deploy:pool": "hardhat run scripts/deploy_pool.js --network amoy",
+    "app": "python3 -m http.server 8080 --directory app/demo"
   },
   "devDependencies": {
     "@aztec/bb.js": "5.3.0",

@@ -317,7 +317,10 @@ aegis-protocol/
 │   ├── balance_proof/
 │   ├── compliance_proof/
 │   └── test/                    # end-to-end circuit tests (node --test)
-├── sdk/aegis.mjs                # off-chain helpers (tree, credentials, auditor decryption)
+├── sdk/aegis.mjs                # off-chain helpers on bb.js (tree, credentials, auditor decryption)
+├── sdk/aegis-core.mjs           # same crypto in pure JS (browser/phone): Poseidon2, Grumpkin, t-of-n decryption
+├── disclosure_ai/               # Claude extracts authority requests → deterministic policy engine
+├── app/demo/                    # mobile web demo (wallet, on-chain view, graduated disclosure)
 ├── tests/                       # pytest test suite
 ├── docker-compose.yml
 ├── Dockerfile
@@ -372,6 +375,9 @@ npm run test:circuits      # executes the circuits with valid and malicious witn
 npm run build:circuits     # ACIR + VK + Solidity UltraHonk verifiers (needs internet for the CRS)
 npx hardhat test           # contracts, including ShieldedPool ↔ SDK tree consistency
 ```
+
+Mobile demo: `npm run app` and open http://localhost:8080 on the phone (same Wi-Fi: use the
+computer's IP). The page runs the real SDK crypto; the chain and the ZK proof are simulated in-page.
 
 Mock proofs are accepted by the Python backend only with `AEGIS_ALLOW_MOCK_PROOFS=1`
 (set automatically in the test suite). `NoirVerifier` dev mode only works on the local chain.

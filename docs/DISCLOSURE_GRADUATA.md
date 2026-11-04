@@ -118,9 +118,10 @@ con cifratura distinta per livello (il fisco tecnicamente *non può* vedere ciò
 
 1. Generare i verificatori Solidity reali (`npm run build:circuits`, richiede internet)
    e una prova end-to-end su testnet.
-2. Chiavi a soglia reali (es. FROST/threshold ElGamal su Grumpkin) per il comitato.
-3. Modulo AI di estrazione (`disclosure_ai`) che produce `DisclosureRequest`, con test
-   di prompt injection.
+2. Chiavi a soglia: fatta la decifratura t-su-n (Shamir + quote parziali, `sdk/aegis-core.mjs`).
+   Mancano DKG (nessun "dealer" che conosce la chiave intera) e prove DLEQ sulle quote.
+3. Modulo AI (`disclosure_ai/triage.py`): fatto, con output strutturato e test di prompt
+   injection su un client simulato. Manca una valutazione su documenti reali.
 4. Revoca delle credenziali: oggi la revoca è "non rinnovare" (credenziali brevi, es. 30 giorni).
 5. Generazione delle prove sul dispositivo dell'utente (bb.js nel browser), non sul server.
 6. Audit di sicurezza di circuiti e contratti, bug bounty, lancio con limiti (TVL cap).
