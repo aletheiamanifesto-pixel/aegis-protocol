@@ -32,6 +32,11 @@ MIMC_ROUNDS = 220
 MIMC_SEED = b"mimc"
 
 
+def _mock_proofs_allowed() -> bool:
+    """See noir_bridge.mock_proofs_allowed(): mock proofs only if explicitly enabled."""
+    return os.getenv("AEGIS_ALLOW_MOCK_PROOFS", "").strip().lower() in {"1", "true", "yes"}
+
+
 class CryptoError(Exception):
     pass
 
@@ -380,6 +385,8 @@ class NoirCircuitInterface:
         import time
 
         if not self._noir_available:
+            if not _mock_proofs_allowed():
+                raise CryptoError("Noir not available and mock proofs disabled (AEGIS_ALLOW_MOCK_PROOFS)")
             return self._mock_proof(circuit_name, private_inputs, public_inputs)
 
         import json
@@ -454,7 +461,9 @@ class NoirCircuitInterface:
         )
 
     def _verify_mock_proof(self, proof: NoirProof) -> bool:
-        """Verify a mock proof (always valid in dev mode)."""
+        """Mock proofs are valid only in dev mode (AEGIS_ALLOW_MOCK_PROOFS=1)."""
+        if not _mock_proofs_allowed():
+            return False
         return len(proof.proof_bytes) == 32  # Valid if 32-byte SHA3
 
 

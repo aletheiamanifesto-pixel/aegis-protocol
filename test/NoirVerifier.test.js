@@ -55,57 +55,38 @@ describe("NoirVerifier", function () {
     });
   });
 
-  // ─── Non-dev mode (_ultraPlonkVerify) ─────────────────────────────────────────
+  // ─── Non-dev mode: delegates to the real verifier ────────────────────────────
 
-  describe("Non-dev mode — _ultraPlonkVerify", function () {
-    let prodVerifier;
+  describe("Non-dev mode — delegates to the bb backend", function () {
+    let prodVerifier, backend;
 
     beforeEach(async function () {
       prodVerifier = await NoirVerifier.deploy(false);
+      backend = await (await ethers.getContractFactory("MockHonkVerifier")).deploy();
     });
 
-    it("returns false when proof is shorter than 32 bytes", async function () {
-      const shortProof = ethers.toUtf8Bytes("short"); // < 32 bytes
+    it("without a backend it rejects everything", async function () {
       const publicInputs = [ethers.keccak256(ethers.toUtf8Bytes("input"))];
-      expect(
-        await prodVerifier.verifyProof.staticCall(shortProof, publicInputs)
-      ).to.equal(false);
+      expect(await prodVerifier.verifyProof.staticCall(ethers.randomBytes(64), publicInputs)).to.equal(false);
     });
 
-    it("returns false when publicInputs is empty", async function () {
-      const proof = ethers.randomBytes(64);
-      expect(
-        await prodVerifier.verifyProof.staticCall(proof, [])
-      ).to.equal(false);
+    it("the old keccak trick (proof = keccak256(publicInputs)) no longer works", async function () {
+      const publicInputs = [ethers.keccak256(ethers.toUtf8Bytes("sender")), ethers.keccak256(ethers.toUtf8Bytes("amount"))];
+      const forged = ethers.concat([ethers.keccak256(ethers.concat(publicInputs)), ethers.randomBytes(32)]);
+      expect(await prodVerifier.verifyProof.staticCall(forged, publicInputs)).to.equal(false);
     });
 
-    it("returns true when first 32 bytes of proof match keccak256(publicInputs)", async function () {
-      const publicInputs = [
-        ethers.keccak256(ethers.toUtf8Bytes("sender")),
-        ethers.keccak256(ethers.toUtf8Bytes("amount")),
-      ];
-      // Compute expected commitment: keccak256(abi.encodePacked(publicInputs))
-      const expectedCommitment = ethers.keccak256(
-        ethers.concat(publicInputs)
-      );
-      // Build proof: first 32 bytes = expectedCommitment, rest can be anything
-      const padding = ethers.randomBytes(32);
-      const proof = ethers.concat([expectedCommitment, padding]);
-
-      expect(
-        await prodVerifier.verifyProof.staticCall(proof, publicInputs)
-      ).to.equal(true);
+    it("with a backend it returns the backend's result", async function () {
+      await prodVerifier.setBackend(await backend.getAddress());
+      const publicInputs = [ethers.keccak256(ethers.toUtf8Bytes("input"))];
+      expect(await prodVerifier.verifyProofView(ethers.randomBytes(64), publicInputs)).to.equal(true);
+      await backend.setResult(false);
+      expect(await prodVerifier.verifyProofView(ethers.randomBytes(64), publicInputs)).to.equal(false);
     });
 
-    it("returns false when proof commitment does not match publicInputs", async function () {
-      const publicInputs = [ethers.keccak256(ethers.toUtf8Bytes("real-input"))];
-      // Build proof with wrong commitment
-      const wrongCommitment = ethers.keccak256(ethers.toUtf8Bytes("wrong-input"));
-      const proof = ethers.concat([wrongCommitment, ethers.randomBytes(32)]);
-
-      expect(
-        await prodVerifier.verifyProof.staticCall(proof, publicInputs)
-      ).to.equal(false);
+    it("only the owner sets the backend", async function () {
+      const [, stranger] = await ethers.getSigners();
+      await expect(prodVerifier.connect(stranger).setBackend(await backend.getAddress())).to.be.revertedWith("Not owner");
     });
   });
 

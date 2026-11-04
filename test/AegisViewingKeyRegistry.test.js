@@ -284,9 +284,9 @@ describe("AegisViewingKeyRegistry", function () {
     });
 
     it("returns false for an expired grant (via time warp)", async function () {
-      // Grant expires in 1 second
+      // Grant expires 10 seconds after the latest block (the grant tx itself is mined at +1s)
       const blockTimestamp = (await ethers.provider.getBlock("latest")).timestamp;
-      const expiresAt = blockTimestamp + 1;
+      const expiresAt = blockTimestamp + 10;
 
       const tx = await registry
         .connect(alice)
@@ -305,8 +305,8 @@ describe("AegisViewingKeyRegistry", function () {
 
       const grantId = event.args.grantId;
 
-      // Advance the block time by 2 seconds
-      await ethers.provider.send("evm_increaseTime", [2]);
+      // Advance the block time past the expiry
+      await ethers.provider.send("evm_increaseTime", [20]);
       await ethers.provider.send("evm_mine");
 
       expect(await registry.isAccessActive(grantId)).to.equal(false);

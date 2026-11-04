@@ -46,6 +46,15 @@ def _is_nargo_available() -> bool:
 _NARGO_AVAILABLE: bool = _is_nargo_available()
 
 
+def mock_proofs_allowed() -> bool:
+    """Mock proofs are accepted ONLY if explicitly enabled (local dev / tests).
+
+    Without AEGIS_ALLOW_MOCK_PROOFS=1 a fake proof is never generated or accepted:
+    previously a missing `nargo` was enough to have every proof "valid".
+    """
+    return os.getenv("AEGIS_ALLOW_MOCK_PROOFS", "").strip().lower() in {"1", "true", "yes"}
+
+
 def compile_circuit(circuit_path: str) -> bool:
     """
     Compile a Noir circuit using nargo.
@@ -89,6 +98,8 @@ def generate_proof(
         ProofResult with proof hex and public inputs.
     """
     if not _NARGO_AVAILABLE:
+        if not mock_proofs_allowed():
+            raise NoirBridgeError("nargo not available and mock proofs disabled (AEGIS_ALLOW_MOCK_PROOFS)")
         return _mock_proof(circuit_name, private_inputs, public_inputs)
 
     circuit_path = Path(circuits_dir) / circuit_name
@@ -214,5 +225,7 @@ def _mock_proof(
 
 
 def _verify_mock(proof: ProofResult) -> bool:
-    """Mock proofs are always valid in dev mode if they have the right size."""
+    """Mock proofs are valid only in dev mode (AEGIS_ALLOW_MOCK_PROOFS=1)."""
+    if not mock_proofs_allowed():
+        return False
     return len(proof.proof_hex) == 64  # 32 bytes hex-encoded

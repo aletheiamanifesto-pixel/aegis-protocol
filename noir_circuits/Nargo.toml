@@ -1,0 +1,3 @@
+[workspace]
+members = ["aegis_lib", "spend", "compliance_proof", "balance_proof"]
+default-member = "spend"

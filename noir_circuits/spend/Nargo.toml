@@ -1,0 +1,8 @@
+[package]
+name = "spend"
+type = "bin"
+authors = ["AEGIS Protocol"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+aegis_lib = { path = "../aegis_lib" }

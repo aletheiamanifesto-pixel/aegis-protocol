@@ -1,22 +1,16 @@
-// balance_proof/src/main.nr
-// Proves: private_balance >= public_threshold
-// Without revealing the actual balance
+//! Proves "balance ≥ threshold" for a committed balance, without revealing the balance.
+//! commitment = Poseidon2(DOMAIN_BALANCE, balance, blinding): binding (the prover
+//! cannot "open" the commitment to a different balance, unlike the old
+//! balance*g + r*h field-arithmetic version) and hiding (the blinding is random).
 
-fn main(
-    private_balance: u64,       // private: actual balance
-    blinding_factor: Field,     // private: Pedersen blinding factor
-    threshold: pub u64,         // public: minimum balance to prove
-    commitment: pub Field,      // public: Pedersen commitment to verify
-) {
-    // Assert balance meets threshold
-    assert(private_balance >= threshold);
+use aegis_lib::DOMAIN_BALANCE;
+use aegis_lib::hash::poseidon2;
 
-    // Verify Pedersen commitment: C = balance * G + r * H
-    // Simplified as field arithmetic for circuit compatibility
-    let g: Field = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798;
-    let h: Field = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8;
-
-    let balance_field: Field = private_balance as Field;
-    let computed_commitment = balance_field * g + blinding_factor * h;
-    assert(computed_commitment == commitment);
+fn main(private_balance: u64, blinding_factor: Field, threshold: pub u64, commitment: pub Field) {
+    assert(blinding_factor != 0, "zero blinding");
+    assert(
+        poseidon2([DOMAIN_BALANCE, private_balance as Field, blinding_factor]) == commitment,
+        "bad commitment",
+    );
+    assert(private_balance >= threshold, "balance below threshold");
 }
