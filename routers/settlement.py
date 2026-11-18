@@ -8,7 +8,8 @@ from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from routers.auth import _get_current_user
+from routers.auth import _get_current_user  # noqa: F401
+from security import require_roles
 from schemas import SubmitBundleRequest
 
 try:
@@ -23,7 +24,7 @@ router = APIRouter(tags=["settlement"])
 @router.post("/api/v1/settlement/submit-bundle")
 def settlement_submit_bundle(
     req: SubmitBundleRequest,
-    current_user: Dict = Depends(_get_current_user),
+    current_user: Dict = Depends(require_roles("compliance", "admin")),
 ):
     """Trigger on-chain settlement for a bundle identified by its Merkle root."""
     if not _settlement_available:

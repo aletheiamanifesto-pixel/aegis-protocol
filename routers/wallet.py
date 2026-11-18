@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
+from security import require_owner
 from schemas import WalletCreateRequest, WalletImportRequest
 
 try:
@@ -40,20 +41,46 @@ from fastapi import HTTPException
 router = APIRouter(tags=["wallet"])
 
 
+def _save_wallet(db, current_user: Dict, result: Dict) -> None:
+    """Link the address to the user: it is the basis of every ownership check."""
+    if not _db_available or db is None:
+        return
+    existing = db.query(db_models.Wallet).filter(db_models.Wallet.address == result["address"]).first()
+    if existing is not None:
+        if existing.user_id != int(current_user["user_id"]):
+            raise HTTPException(status_code=409, detail="Address already linked to another account")
+        return
+    db.add(db_models.Wallet(user_id=int(current_user["user_id"]), address=result["address"],
+                            encrypted_key=result["encrypted_key"]))
+    db.commit()
+
+
 @router.post("/wallet/create")
-def wallet_create(req: WalletCreateRequest, current_user: Dict = Depends(_get_current_user)):
+def wallet_create(req: WalletCreateRequest, current_user: Dict = Depends(_get_current_user),
+                  db: Session = Depends(get_db)):
     if not _ws_available:
         raise HTTPException(status_code=503, detail="Wallet service not available")
     result = _create_wallet(req.password)
+    _save_wallet(db, current_user, result)
     return result
 
 
 @router.post("/wallet/import")
-def wallet_import(req: WalletImportRequest, current_user: Dict = Depends(_get_current_user)):
+def wallet_import(req: WalletImportRequest, current_user: Dict = Depends(_get_current_user),
+                  db: Session = Depends(get_db)):
     if not _ws_available:
         raise HTTPException(status_code=503, detail="Wallet service not available")
     result = _import_wallet(req.mnemonic_or_private_key, req.password)
+    _save_wallet(db, current_user, result)
     return result
+
+
+@router.get("/wallet/mine")
+def wallet_mine(current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db)):
+    if not _db_available or db is None:
+        return {"wallets": []}
+    rows = db.query(db_models.Wallet).filter(db_models.Wallet.user_id == int(current_user["user_id"])).all()
+    return {"wallets": [{"address": w.address, "created_at": w.created_at.isoformat()} for w in rows]}
 
 
 @router.get("/wallet/balance/{address}")
@@ -73,6 +100,8 @@ def wallet_transactions(
 ):
     if not _db_available or db is None:
         return {"address": address, "transactions": []}
+    # The history linked to the account is private: owner only (or compliance).
+    require_owner(db, current_user, address, also_roles=("compliance", "admin"))
     txns = (
         db.query(db_models.Transaction)
         .filter(db_models.Transaction.sender_address == address)

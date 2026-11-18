@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
+from security import get_db as _sec_get_db, require_owner
 from schemas import (
     DepositRequest,
     RecurringPaymentRequest,
@@ -45,9 +46,11 @@ router = APIRouter(tags=["banking"])
 
 
 @router.post("/banking/deposit")
-def banking_deposit(req: DepositRequest, current_user: Dict = Depends(_get_current_user)):
+def banking_deposit(req: DepositRequest, current_user: Dict = Depends(_get_current_user),
+                    db=Depends(_sec_get_db)):
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
+    require_owner(db, current_user, req.wallet_address)
     try:
         result = deposit_eur(current_user["user_id"], req.amount, req.wallet_address)
         return result
@@ -56,9 +59,11 @@ def banking_deposit(req: DepositRequest, current_user: Dict = Depends(_get_curre
 
 
 @router.post("/banking/withdraw")
-def banking_withdraw(req: WithdrawRequest, current_user: Dict = Depends(_get_current_user)):
+def banking_withdraw(req: WithdrawRequest, current_user: Dict = Depends(_get_current_user),
+                     db=Depends(_sec_get_db)):
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
+    require_owner(db, current_user, req.wallet_address)
     try:
         result = withdraw_eur(current_user["user_id"], req.amount, req.wallet_address, req.iban)
         return result
@@ -91,7 +96,9 @@ def banking_statement(
 def banking_schedule_payment(
     req: SchedulePaymentRequest,
     current_user: Dict = Depends(_get_current_user),
+    db=Depends(_sec_get_db),
 ):
+    require_owner(db, current_user, req.from_address)
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
     try:
@@ -107,7 +114,9 @@ def banking_schedule_payment(
 def banking_recurring_payment(
     req: RecurringPaymentRequest,
     current_user: Dict = Depends(_get_current_user),
+    db=Depends(_sec_get_db),
 ):
+    require_owner(db, current_user, req.from_address)
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
     try:

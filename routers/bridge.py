@@ -9,6 +9,7 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException
 
 from routers.auth import _get_current_user
+from security import get_db as _sec_get_db, require_owner
 from schemas import BridgeInitiateRequest
 
 try:
@@ -27,7 +28,9 @@ router = APIRouter(tags=["bridge"])
 
 
 @router.post("/api/v1/bridge/initiate")
-def bridge_initiate(req: BridgeInitiateRequest, current_user: Dict = Depends(_get_current_user)):
+def bridge_initiate(req: BridgeInitiateRequest, current_user: Dict = Depends(_get_current_user),
+                    db=Depends(_sec_get_db)):
+    require_owner(db, current_user, req.sender)
     """Initiate a cross-chain bridge transfer."""
     if not _bridge_available:
         raise HTTPException(status_code=503, detail="Bridge service not available")

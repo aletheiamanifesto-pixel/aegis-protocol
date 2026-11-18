@@ -10,6 +10,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from routers.auth import _get_current_user
+from security import require_roles
 
 try:
     from reporting import ESMAReporter, ReserveAttestor
@@ -24,7 +25,7 @@ router = APIRouter(tags=["reporting"])
 def reporting_compliance_report(
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
-    current_user: Dict = Depends(_get_current_user),
+    current_user: Dict = Depends(require_roles("compliance", "authority", "admin")),
 ):
     """Generate a MiCA compliance report for the given time period."""
     if not _reporting_available:

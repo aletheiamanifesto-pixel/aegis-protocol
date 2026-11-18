@@ -22,6 +22,12 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # "user" | "compliance" | "authority" | "admin". Changed only by an admin, never at registration.
+    role = Column(String(20), default="user", nullable=False)
+    # For role "authority": "uif", "guardia_finanza", "tax_authority", "judicial_authority", ...
+    authority_type = Column(String(50), nullable=True)
+    # Bumped on logout / password change: every token issued before becomes invalid.
+    token_version = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -75,6 +81,10 @@ class ComplianceProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     kyc_verified = Column(Boolean, default=False, nullable=False)
+    # "none" | "pending" | "approved" | "rejected": only compliance or the provider moves it to approved.
+    kyc_status = Column(String(20), default="none", nullable=False)
+    kyc_tier = Column(Integer, default=0, nullable=False)
+    kyc_provider_ref = Column(String(255), nullable=True)
     aml_screened = Column(Boolean, default=False, nullable=False)
     daily_limit = Column(Float, default=10000.0, nullable=False)
     single_tx_limit = Column(Float, default=5000.0, nullable=False)
@@ -192,3 +202,15 @@ class RegulatoryAccessRequestDB(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     responded_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
+
+
+class LoginAttempt(Base):
+    """Login attempts, used to lock out brute force (per username and per IP)."""
+
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), nullable=False, index=True)
+    ip_address = Column(String(45), nullable=True, index=True)
+    success = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

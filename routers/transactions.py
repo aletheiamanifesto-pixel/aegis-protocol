@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
+from security import require_owner
 from schemas import SendTransactionRequest
 
 try:
@@ -45,6 +46,9 @@ def transactions_send(
 ):
     if not _tp_available:
         raise HTTPException(status_code=503, detail="Transaction processor not available")
+
+    # The sender must be a wallet of the authenticated user.
+    require_owner(db, current_user, req.from_address)
 
     if _ce_available:
         engine = ComplianceEngine()

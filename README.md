@@ -147,7 +147,9 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 ### Compliance (MiCA)
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/compliance/kyc` | Submit KYC data |
+| `POST` | `/compliance/kyc` | Submit KYC data (status → `pending`, never self-verified) |
+| `POST` | `/compliance/kyc/{user_id}/decision` | Approve/reject KYC (role `compliance`/`admin`, not on yourself) |
+| `POST` | `/compliance/kyc/webhook` | KYC provider result, HMAC-signed (`X-KYC-Signature`, `KYC_WEBHOOK_SECRET`) |
 | `GET`  | `/compliance/profile` | Get compliance profile |
 | `POST` | `/compliance/proof/generate` | Generate ZK proof stub |
 
@@ -157,14 +159,28 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 | `POST` | `/proof/generate` | Generate ZK proof |
 | `POST` | `/proof/verify` | Verify ZK proof hash |
 
-### Viewing Keys (Selective Disclosure)
-| Method   | Path | Description |
-|----------|------|-------------|
-| `POST`   | `/viewing-keys/create` | Create self-grant viewing key |
-| `POST`   | `/viewing-keys/grant` | Grant access to third party |
-| `POST`   | `/viewing-keys/{id}/redeem` | Redeem a viewing key |
-| `DELETE` | `/viewing-keys/{id}/revoke` | Revoke a viewing key |
-| `GET`    | `/viewing-keys/{owner}/active` | List active keys |
+### Viewing Keys & regulatory access
+| Method   | Path | Who |
+|----------|------|-----|
+| `POST`   | `/viewing-keys/v2/create`, `/derive` | address owner |
+| `POST`   | `/viewing-keys/v2/decrypt` | address owner, or the authority whose approved request the key belongs to |
+| `DELETE` | `/viewing-keys/v2/{key_id}/revoke` | address owner |
+| `GET`    | `/viewing-keys/v2/{address}/audit` | owner, `compliance`, `admin` |
+| `POST`   | `/regulatory/request-access` | role `authority` (requester identity taken from the account) |
+| `POST`   | `/regulatory/requests/{id}/approve` · `/deny` · `/revoke` | owner of the address in the request |
+| `GET`    | `/regulatory/requests/detail/{id}` | owner, requesting authority, `compliance`, `admin` |
+
+### Accounts & roles
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/auth/login` | Login (5 failures in 15 min → 429) |
+| `POST` | `/auth/logout` | Revoke all of the user's tokens |
+| `GET`  | `/auth/me` | Current identity and role |
+| `POST` | `/admin/users/{id}/role` | Assign `user` / `compliance` / `authority` / `admin` (admin only) |
+
+Every address-based endpoint checks that the address belongs to a wallet of the
+authenticated user (`/wallet/create` and `/wallet/import` link it to the account).
+Bootstrap the first admin with `python scripts/create_admin.py <username>`.
 
 ### Banking
 | Method | Path | Description |
@@ -179,9 +195,9 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 ### Advanced
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/settlement/submit-bundle` | Submit Merkle bundle for on-chain settlement |
+| `POST` | `/api/v1/settlement/submit-bundle` | Submit Merkle bundle for on-chain settlement (`compliance`/`admin`) |
 | `GET`  | `/api/v1/oracle/eur-usd` | Chainlink EUR/USD price feed |
-| `GET`  | `/api/v1/reporting/compliance-report` | MiCA compliance report |
+| `GET`  | `/api/v1/reporting/compliance-report` | MiCA compliance report (`compliance`/`authority`/`admin`) |
 | `GET`  | `/api/v1/reporting/reserve-attestation` | On-chain reserve attestation |
 | `POST` | `/api/v1/bridge/initiate` | Initiate cross-chain bridge transfer |
 | `GET`  | `/api/v1/bridge/status/{request_id}` | Bridge transfer status |
