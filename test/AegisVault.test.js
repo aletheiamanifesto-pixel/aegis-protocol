@@ -109,7 +109,7 @@ describe("AegisVault", function () {
 
   describe("Withdraw", function () {
     const txRef = ethers.keccak256(ethers.toUtf8Bytes("tx-ref-001"));
-    const iban = "DE89370400440532013000";
+    const iban = ethers.id("payout:DE89370400440532013000:2026-11-04"); // hash, never the raw IBAN
 
     beforeEach(async function () {
       await vault.connect(signer1).deposit(alice.address, 5000n, txRef);
@@ -160,7 +160,7 @@ describe("AegisVault", function () {
 
   describe("Reserve proof", function () {
     const txRef = ethers.keccak256(ethers.toUtf8Bytes("tx-ref-001"));
-    const iban = "DE89370400440532013000";
+    const iban = ethers.id("payout:DE89370400440532013000:2026-11-04"); // hash, never the raw IBAN
 
     it("getReserveRatio returns 10000 when total supply is zero", async function () {
       expect(await vault.getReserveRatio()).to.equal(10000n);
@@ -319,6 +319,79 @@ describe("AegisVault", function () {
       await expect(
         vault.connect(alice).setRequiredSignatures(1)
       ).to.be.revertedWith("Not owner");
+    });
+  });
+
+  // ─── Multi-sig (threshold actually enforced) ─────────────────────────────────
+
+  describe("Multi-sig threshold", function () {
+    const txRef = ethers.id("bank-tx-777");
+
+    beforeEach(async function () {
+      await vault.connect(owner).setRequiredSignatures(2);
+    });
+
+    it("a single signer cannot mint on their own", async function () {
+      await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(0n);
+      await vault.connect(signer2).deposit(alice.address, 1000n, txRef);
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(1000n);
+    });
+
+    it("the same signer cannot vote twice", async function () {
+      await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
+      await expect(vault.connect(signer1).deposit(alice.address, 1000n, txRef)).to.be.revertedWith("Already approved");
+    });
+
+    it("the same bank transfer cannot be minted twice", async function () {
+      await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
+      await vault.connect(signer2).deposit(alice.address, 1000n, txRef);
+      await expect(vault.connect(signer1).deposit(alice.address, 1000n, txRef)).to.be.revertedWith("Already executed");
+    });
+
+    it("different parameters = different operation (no vote mixing)", async function () {
+      await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
+      await vault.connect(signer2).deposit(alice.address, 9999n, txRef);
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(0n);
+    });
+
+    it("two identical withdrawals are two distinct operations", async function () {
+      await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
+      await vault.connect(signer2).deposit(alice.address, 1000n, txRef);
+      const ref = ethers.id("payout-1");
+      for (let i = 0; i < 2; i++) {
+        await vault.connect(signer1).withdraw(alice.address, 100n, ref);
+        await vault.connect(signer2).withdraw(alice.address, 100n, ref);
+      }
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(800n);
+    });
+  });
+
+  // ─── Independent reserve attestation ─────────────────────────────────────────
+
+  describe("Attested reserve", function () {
+    it("the attestor cannot be a signer", async function () {
+      await expect(vault.connect(owner).setAttestor(signer1.address, true)).to.be.revertedWith(
+        "Attestor must be independent of signers"
+      );
+    });
+
+    it("with enforcement on, minting beyond the attested reserve is impossible", async function () {
+      await vault.connect(owner).setAttestor(bob.address, true);
+      await expect(vault.connect(signer1).deposit(alice.address, 1n, ethers.id("a"))).to.be.revertedWith(
+        "Reserve attestation stale"
+      );
+      await vault.connect(bob).attestReserve(1000n, ethers.id("bank-statement-2026-11-04"));
+      await vault.connect(signer1).deposit(alice.address, 1000n, ethers.id("b"));
+      await expect(vault.connect(signer1).deposit(alice.address, 1n, ethers.id("c"))).to.be.revertedWith(
+        "Exceeds attested reserve"
+      );
+      expect(await vault.getAttestedReserveRatio()).to.equal(10000n);
+    });
+
+    it("only the attestor can attest", async function () {
+      await vault.connect(owner).setAttestor(bob.address, false);
+      await expect(vault.connect(signer1).attestReserve(1n, ethers.ZeroHash)).to.be.revertedWith("Not attestor");
     });
   });
 });

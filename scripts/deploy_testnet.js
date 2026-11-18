@@ -26,10 +26,11 @@ async function main() {
     "ETH"
   );
 
-  // 1. Deploy NoirVerifier in dev mode
-  console.log("\n[1/5] Deploying NoirVerifier (dev mode)...");
+  // 1. NoirVerifier in production mode: devMode is only allowed on the local chain.
+  //    Then point it at the real verifier with setBackend() (see scripts/deploy_pool.js).
+  console.log("\n[1/5] Deploying NoirVerifier (production: setBackend() required)...");
   const NoirVerifier = await ethers.getContractFactory("NoirVerifier");
-  const verifier = await NoirVerifier.deploy(true);
+  const verifier = await NoirVerifier.deploy(false);
   await verifier.waitForDeployment();
   const verifierAddress = await verifier.getAddress();
   console.log("NoirVerifier deployed to:", verifierAddress);

@@ -163,11 +163,23 @@ class TestViewingKeyDerivation:
         assert vp1 != vp2
 
     def test_encrypt_decrypt_roundtrip(self):
-        _, public_key = derive_viewing_key(b"\x04" * 32)
+        private_key, public_key = derive_viewing_key(b"\x04" * 32)
         message = b"secret balance data"
-        nonce, ciphertext = encrypt_for_grantee(message, public_key)
-        decrypted = decrypt_from_owner(ciphertext, nonce, public_key)
+        header, ciphertext = encrypt_for_grantee(message, public_key)
+        decrypted = decrypt_from_owner(ciphertext, header, private_key)
         assert decrypted == message
+
+    def test_public_key_alone_cannot_decrypt(self):
+        """The old scheme derived the key from the public key: anyone could decrypt."""
+        from crypto_primitives import CryptoError
+
+        _, public_key = derive_viewing_key(b"\x06" * 32)
+        other_private, _ = derive_viewing_key(b"\x07" * 32)
+        header, ciphertext = encrypt_for_grantee(b"secret", public_key)
+        with pytest.raises(CryptoError):
+            decrypt_from_owner(ciphertext, header, public_key)
+        with pytest.raises(CryptoError):
+            decrypt_from_owner(ciphertext, header, other_private)
 
     def test_encrypt_changes_data(self):
         _, public_key = derive_viewing_key(b"\x05" * 32)

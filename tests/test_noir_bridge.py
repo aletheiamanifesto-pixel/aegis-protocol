@@ -74,3 +74,10 @@ class TestVerifyProof:
             is_mock=True,
         )
         assert not _verify_mock(bad_proof)
+
+
+def test_mock_proofs_rejected_without_explicit_flag(monkeypatch):
+    """In production (flag off) a mock proof is never valid."""
+    monkeypatch.setenv("AEGIS_ALLOW_MOCK_PROOFS", "0")
+    proof = _mock_proof("balance_proof", {"a": 1}, {"b": 2})
+    assert _verify_mock(proof) is False

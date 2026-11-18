@@ -105,7 +105,9 @@ npx hardhat test
 
 ## Smart Contracts
 
-Deployed on **Polygon Amoy** testnet (Chain ID: 80002).
+Target network: **Polygon Amoy** testnet (Chain ID: 80002). **No contract addresses are published
+yet**: deploy with `npm run deploy` / `npm run deploy:pool` and record the addresses from
+`deployed_addresses.json` here.
 
 | Contract | Description |
 |----------|-------------|
@@ -307,12 +309,20 @@ aegis-protocol/
 │   ├── AegisEUR.sol
 │   ├── AegisVault.sol
 │   ├── AegisBundleVerifier.sol
-│   ├── NoirVerifier.sol
+│   ├── NoirVerifier.sol         # adapter → real bb-generated UltraHonk verifier
+│   ├── ShieldedPool.sol         # confidential pool for EURC/EURe (notes, nullifiers, disclosure)
+│   ├── lib/Poseidon2.sol        # Poseidon2 BN254, identical to Noir/Barretenberg
 │   └── ProofMintRegistry.sol
-├── noir_circuits/               # Noir ZK circuits
+├── noir_circuits/               # Noir 1.0 workspace
+│   ├── aegis_lib/               # shared primitives (Poseidon2, notes, Merkle, KYC credential, encryption)
+│   ├── spend/                   # join-split 2→2 + KYC + graduated disclosure
 │   ├── balance_proof/
-│   ├── transfer_proof/
-│   └── compliance_proof/
+│   ├── compliance_proof/
+│   └── test/                    # end-to-end circuit tests (node --test)
+├── sdk/aegis.mjs                # off-chain helpers on bb.js (tree, credentials, auditor decryption)
+├── sdk/aegis-core.mjs           # same crypto in pure JS (browser/phone): Poseidon2, Grumpkin, t-of-n decryption
+├── disclosure_ai/               # Claude extracts authority requests → deterministic policy engine
+├── app/demo/                    # mobile web demo (wallet, on-chain view, graduated disclosure)
 ├── tests/                       # pytest test suite
 ├── docker-compose.yml
 ├── Dockerfile
@@ -330,7 +340,7 @@ aegis-protocol/
 | **ZK Proofs** | Noir circuits + Python bridge |
 | **Blockchain** | Web3.py + eth-account (Polygon Amoy) |
 | **Auth** | JWT (python-jose) + bcrypt (passlib) |
-| **Privacy** | Pedersen commitments + viewing keys + regulatory escrow |
+| **Privacy** | Poseidon2 note commitments + nullifiers + graduated (L0–L4) verifiable disclosure |
 | **Oracle** | Chainlink EUR/USD price feed |
 
 ---
@@ -346,7 +356,8 @@ aegis-protocol/
 | Transaction velocity limits | In-memory velocity tracker (5 tx/min) |
 | ESMA reporting | `/api/v1/reporting/compliance-report` |
 | Selective disclosure (auditors) | Zcash-style viewing keys |
-| On-chain reserve attestation | `AegisVault.proveReserve()` + `/api/v1/reporting/reserve-attestation` |
+| On-chain reserve attestation | `AegisVault.attestReserve()` by an independent attestor (optionally caps minting) |
+| Multi-sig mint/burn | `AegisVault`: N distinct signer approvals per operation, no replay of bank refs |
 
 ---
 
@@ -354,16 +365,24 @@ aegis-protocol/
 
 | Circuit | Proves |
 |---------|--------|
-| `balance_proof` | Balance ≥ threshold without revealing exact balance |
-| `transfer_proof` | Valid transfer with sufficient funds |
-| `compliance_proof` | KYC verified without revealing identity |
+| `spend` | Shielded join-split (deposit / private transfer / withdrawal): note ownership via Merkle membership, nullifiers, value conservation, issuer-signed KYC credential (expiry, jurisdiction, tier limit) and verifiable encryption of a TAX (L2) and AML (L3) disclosure payload to threshold auditor keys |
+| `balance_proof` | Balance ≥ threshold for a binding Poseidon2 commitment |
+| `compliance_proof` | Valid KYC credential with tier ≥ min, without revealing identity (scoped nullifier) |
+
+All hashes are Poseidon2 (same sponge as Barretenberg), signatures ECDSA-secp256k1,
+encryption ECDH on Grumpkin. See [docs/DISCLOSURE_GRADUATA.md](docs/DISCLOSURE_GRADUATA.md).
 
 ```bash
-cd noir_circuits/balance_proof
-nargo compile
-nargo prove
-nargo verify
+npm run test:circuits      # executes the circuits with valid and malicious witnesses
+npm run build:circuits     # ACIR + VK + Solidity UltraHonk verifiers (needs internet for the CRS)
+npx hardhat test           # contracts, including ShieldedPool ↔ SDK tree consistency
 ```
+
+Mobile demo: `npm run app` and open http://localhost:8080 on the phone (same Wi-Fi: use the
+computer's IP). The page runs the real SDK crypto; the chain and the ZK proof are simulated in-page.
+
+Mock proofs are accepted by the Python backend only with `AEGIS_ALLOW_MOCK_PROOFS=1`
+(set automatically in the test suite). `NoirVerifier` dev mode only works on the local chain.
 
 ---
 

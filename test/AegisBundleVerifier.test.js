@@ -68,6 +68,8 @@ describe("AegisBundleVerifier", function () {
     [owner, submitter, alice] = await ethers.getSigners();
     AegisBundleVerifier = await ethers.getContractFactory("AegisBundleVerifier");
     bundleVerifier = await AegisBundleVerifier.deploy();
+    // Since the access-control hardening, only authorized submitters can submit bundles.
+    await bundleVerifier.connect(owner).addSubmitter(submitter.address);
   });
 
   // Helper: create deterministic ids

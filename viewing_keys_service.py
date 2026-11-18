@@ -34,7 +34,9 @@ _access_logs: List[AccessLog] = []
 def _get_fernet() -> Fernet:
     """Return a Fernet instance keyed from env SECRET_KEY."""
     import base64
-    secret = os.getenv("SECRET_KEY", "aegis-dev-secret-key-32bytes!!!")
+    from aegis_env import get_secret_key
+
+    secret = get_secret_key()
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 
