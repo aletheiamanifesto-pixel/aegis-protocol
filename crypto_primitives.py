@@ -25,9 +25,9 @@ from typing import List, Optional, Tuple, Dict, Any
 # ---------------------------------------------------------------------------
 
 # Field prime (BN254 scalar field order, used in Noir/Groth16)
-FIELD_PRIME = 0x30644e72e131a029b85045b68181585d2833e84879b9709142e1f988d8906901
-PEDERSEN_G = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
-PEDERSEN_H = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
+# BN254 scalar field: the field of the Noir circuits and of Poseidon2.
+FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+DOMAIN_BALANCE = 6  # same separator as noir_circuits/aegis_lib (DOMAIN_BALANCE)
 MIMC_ROUNDS = 220
 MIMC_SEED = b"mimc"
 
@@ -49,28 +49,77 @@ def _field_mod(x: int) -> int:
     return x % FIELD_PRIME
 
 
+_P2 = None
+
+
+def _poseidon2_constants():
+    global _P2
+    if _P2 is None:
+        from pathlib import Path
+        data = json.loads((Path(__file__).parent / "scripts" / "codegen" / "poseidon2_bn254_t4.json").read_text())
+        _P2 = ([[int(x, 16) for x in r] for r in data["rc"]], [int(x, 16) for x in data["diag"]])
+    return _P2
+
+
+def _poseidon2_permutation(state: List[int]) -> List[int]:
+    rc, diag = _poseidon2_constants()
+    p = FIELD_PRIME
+
+    def ext(s):
+        a, b, c, d = s
+        return [(5 * a + 7 * b + c + 3 * d) % p, (4 * a + 6 * b + c + d) % p,
+                (a + 3 * b + 5 * c + 7 * d) % p, (a + b + 4 * c + 6 * d) % p]
+
+    s = ext([x % p for x in state])
+    for r in range(64):
+        if r < 4 or r >= 60:
+            s = ext([pow((s[j] + rc[r][j]) % p, 5, p) for j in range(4)])
+        else:
+            s[0] = pow((s[0] + rc[r][0]) % p, 5, p)
+            t = sum(s) % p
+            s = [(s[j] * diag[j] + t) % p for j in range(4)]
+    return s
+
+
+def poseidon2_hash(inputs: List[int]) -> int:
+    """Poseidon2 sponge over BN254 (t=4), identical to Barretenberg, Noir and sdk/aegis-core.mjs."""
+    p = FIELD_PRIME
+    state = [0, 0, 0, len(inputs) << 64]
+    cache: List[int] = []
+    for x in inputs:
+        if len(cache) == 3:
+            for j in range(3):
+                state[j] = (state[j] + cache[j]) % p
+            state = _poseidon2_permutation(state)
+            cache = []
+        cache.append(x % p)
+    for j, c in enumerate(cache):
+        state[j] = (state[j] + c) % p
+    return _poseidon2_permutation(state)[0]
+
+
 def pedersen_commit(value: int, blinding_factor: Optional[int] = None) -> Tuple[int, int]:
     """
-    Compute a Pedersen commitment: C = v*G + r*H (mod FIELD_PRIME).
+    Hiding and binding commitment to a value: C = Poseidon2(DOMAIN_BALANCE, value, r).
 
-    Args:
-        value: The secret value to commit to.
-        blinding_factor: Random blinding factor. Generated if not provided.
+    It is the same commitment that the `balance_proof` circuit checks. (The name stays for
+    compatibility: the old version computed v*G + r*H as plain numbers modulo a prime, with
+    no elliptic curve, so it could be inverted and forged.)
 
     Returns:
         (commitment, blinding_factor) tuple.
     """
     if blinding_factor is None:
-        blinding_factor = int.from_bytes(os.urandom(32), "big") % FIELD_PRIME
-
-    commitment = _field_mod(
-        _field_mod(value * PEDERSEN_G) + _field_mod(blinding_factor * PEDERSEN_H)
-    )
+        blinding_factor = int.from_bytes(os.urandom(48), "big") % (FIELD_PRIME - 1) + 1
+    commitment = poseidon2_hash([DOMAIN_BALANCE, value, blinding_factor])
     return commitment, blinding_factor
 
 
+balance_commit = pedersen_commit
+
+
 def pedersen_verify(value: int, blinding_factor: int, commitment: int) -> bool:
-    """Verify that commitment = v*G + r*H."""
+    """Verify that commitment = Poseidon2(DOMAIN_BALANCE, value, blinding_factor)."""
     expected, _ = pedersen_commit(value, blinding_factor)
     return expected == commitment
 
@@ -258,66 +307,78 @@ class MerkleTree:
 
 def derive_viewing_key(wallet_private_key_bytes: bytes, salt: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     """
-    Derive a viewing key pair from a wallet private key.
-
-    Uses HKDF-SHA256 to derive a deterministic key pair for selective disclosure.
-
-    Args:
-        wallet_private_key_bytes: Raw private key bytes (32 bytes).
-        salt: Optional salt for HKDF. Generated randomly if not provided.
+    Derive an X25519 viewing key pair from a wallet private key (HKDF-style derivation).
 
     Returns:
-        (viewing_private_key, viewing_public_key) as bytes.
+        (viewing_private_key, viewing_public_key): 32 raw bytes each. Only the private key
+        can decrypt what is encrypted for the public key.
     """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
     if salt is None:
         salt = os.urandom(32)
 
     prk = hmac.new(salt, wallet_private_key_bytes, hashlib.sha256).digest()
-
-    info = b"aegis-viewing-key-v1"
-    viewing_private = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
-    viewing_public = hashlib.sha256(b"pub:" + viewing_private).digest()
-
+    viewing_private = hmac.new(prk, b"aegis-viewing-key-v2\x01", hashlib.sha256).digest()
+    viewing_public = X25519PrivateKey.from_private_bytes(viewing_private).public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
     return viewing_private, viewing_public
+
+
+_GRANTEE_INFO = b"aegis-grantee-ecies-v1"
+
+
+def _grantee_key(shared: bytes, eph_pub: bytes, grantee_pub: bytes) -> bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_GRANTEE_INFO + eph_pub + grantee_pub).derive(shared)
 
 
 def encrypt_for_grantee(data: bytes, grantee_public_key: bytes) -> Tuple[bytes, bytes]:
     """
-    Encrypt data for a grantee using their public key (ECDH-like).
+    Encrypt `data` so that ONLY the holder of the grantee's private key can read it.
 
-    Args:
-        data: Data to encrypt.
-        grantee_public_key: Grantee's public key bytes.
+    ECIES: ephemeral X25519 key, ECDH with the grantee's public key, HKDF-SHA256, AES-256-GCM.
+    (The old version derived the key from the public key alone: anyone could decrypt.)
 
     Returns:
-        (nonce, ciphertext) tuple.
+        (header, ciphertext): header = ephemeral public key (32 bytes) || nonce (12 bytes);
+        the ciphertext includes the GCM tag.
     """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    if len(grantee_public_key) != 32:
+        raise CryptoError("grantee public key must be 32 bytes (X25519)")
+    eph = X25519PrivateKey.generate()
+    eph_pub = eph.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    shared = eph.exchange(X25519PublicKey.from_public_bytes(grantee_public_key))
+    key = _grantee_key(shared, eph_pub, grantee_public_key)
     nonce = os.urandom(12)
-    shared_secret = hmac.new(grantee_public_key, nonce, hashlib.sha256).digest()
-
-    key_stream = b""
-    counter = 0
-    while len(key_stream) < len(data):
-        block = hashlib.sha256(shared_secret + counter.to_bytes(4, "big")).digest()
-        key_stream += block
-        counter += 1
-
-    ciphertext = bytes(a ^ b for a, b in zip(data, key_stream[:len(data)]))
-    return nonce, ciphertext
+    return eph_pub + nonce, AESGCM(key).encrypt(nonce, data, None)
 
 
-def decrypt_from_owner(ciphertext: bytes, nonce: bytes, grantee_public_key: bytes) -> bytes:
-    """Decrypt data encrypted with encrypt_for_grantee."""
-    shared_secret = hmac.new(grantee_public_key, nonce, hashlib.sha256).digest()
+def decrypt_from_owner(ciphertext: bytes, header: bytes, grantee_private_key: bytes) -> bytes:
+    """Decrypt with the grantee's PRIVATE key. Raises CryptoError on a wrong key or tampered data."""
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    key_stream = b""
-    counter = 0
-    while len(key_stream) < len(ciphertext):
-        block = hashlib.sha256(shared_secret + counter.to_bytes(4, "big")).digest()
-        key_stream += block
-        counter += 1
-
-    return bytes(a ^ b for a, b in zip(ciphertext, key_stream[:len(ciphertext)]))
+    if len(header) != 44 or len(grantee_private_key) != 32:
+        raise CryptoError("invalid header or private key")
+    eph_pub, nonce = header[:32], header[32:]
+    priv = X25519PrivateKey.from_private_bytes(grantee_private_key)
+    grantee_pub = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    key = _grantee_key(priv.exchange(X25519PublicKey.from_public_bytes(eph_pub)), eph_pub, grantee_pub)
+    try:
+        return AESGCM(key).decrypt(nonce, ciphertext, None)
+    except InvalidTag as exc:
+        raise CryptoError("decryption failed: wrong key or tampered data") from exc
 
 
 # ---------------------------------------------------------------------------

@@ -56,6 +56,10 @@ def create_wallet(password: str) -> Dict[str, str]:
         }
 
     except ImportError:
+        # Without eth_account there is no valid address: simulation only in development.
+        from aegis_env import require_mocks
+
+        require_mocks("wallet creation (eth_account missing)")
         import secrets
         private_key_hex = secrets.token_hex(32)
         mnemonic_phrase = "mock mnemonic phrase for development testing only do not use"
@@ -100,6 +104,9 @@ def import_wallet(mnemonic_or_private_key: str, password: str) -> Dict[str, str]
         return {"address": account.address, "encrypted_key": encrypted_key}
 
     except ImportError:
+        from aegis_env import require_mocks
+
+        require_mocks("wallet import (eth_account missing)")
         private_key_hex = mnemonic_or_private_key.strip().lstrip("0x")
         account_address = "0x" + hashlib.sha256(private_key_hex.encode()).hexdigest()[:40]
 

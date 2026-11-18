@@ -188,7 +188,10 @@ class BridgeManager:
                 logger.warning("BridgeManager: compliance check error (ignored): %s", exc)
 
     def _simulate_bridge(self, request_id: str, request: BridgeRequest) -> BridgeResult:
-        """Return a deterministic simulated bridge result (dev mode)."""
+        """Return a deterministic simulated bridge result (dev mode only)."""
+        from aegis_env import require_mocks
+
+        require_mocks("cross-chain bridge")
         raw = (
             f"{request_id}:{request.source_chain}:{request.dest_chain}:"
             f"{request.amount}:{request.sender}:{request.recipient}:{request.token_address}"

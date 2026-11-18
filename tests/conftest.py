@@ -12,6 +12,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-for-test")
 # The tests run without nargo: mock proofs are allowed ONLY here.
 os.environ.setdefault("AEGIS_ALLOW_MOCK_PROOFS", "1")
+# ...and so are the simulated chain/bridge/wallet (see aegis_env.py).
+os.environ.setdefault("AEGIS_ALLOW_MOCKS", "1")
 os.environ.setdefault("RPC_URL", "http://localhost:8545")
 
 

@@ -105,7 +105,9 @@ npx hardhat test
 
 ## Smart Contracts
 
-Deployed on **Polygon Amoy** testnet (Chain ID: 80002).
+Target network: **Polygon Amoy** testnet (Chain ID: 80002). **No contract addresses are published
+yet**: deploy with `npm run deploy` / `npm run deploy:pool` and record the addresses from
+`deployed_addresses.json` here.
 
 | Contract | Description |
 |----------|-------------|

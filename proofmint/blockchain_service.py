@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 
 
 def _mock_tx_hash(payload: dict) -> str:
+    from aegis_env import require_mocks
+
+    require_mocks("ProofMint on-chain write")
     raw = json.dumps(payload, sort_keys=True).encode()
     return "0x" + hashlib.sha256(raw + str(time.time()).encode()).hexdigest()
 
@@ -97,18 +100,24 @@ def create_passport_onchain(product_id: str, dpp_hash: str, ipfs_cid: str) -> st
 
 def verify_passport_onchain(passport_id: int, expected_hash: str) -> bool:
     if not (RPC_URL and PROOFMINT_REGISTRY_ADDRESS):
+        from aegis_env import require_mocks
+
+        require_mocks("ProofMint on-chain verification")
         return True
 
     try:
         w3 = _web3()
         if not w3.is_connected():
-            return True
+            raise RuntimeError("Web3 not connected")
         contract = _contract(w3)
         expected_hash_bytes = Web3.to_bytes(hexstr=expected_hash)
         return bool(contract.functions.verifyPassport(passport_id, expected_hash_bytes).call())
     except Exception:
-        logger.exception("ProofMint verifyPassport on-chain call failed; returning mock-success")
-        return True
+        logger.exception("ProofMint verifyPassport on-chain call failed")
+        from aegis_env import mocks_allowed
+
+        # Verification NEVER passes by default on an error: only in explicit development.
+        return mocks_allowed()
 
 
 def update_passport_onchain(passport_id: int, new_hash: str, new_ipfs_cid: str) -> str:

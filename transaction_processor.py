@@ -151,7 +151,9 @@ class TransactionProcessor:
             }
 
         except Exception as exc:
-            # Dev-mode mock
+            # Simulated result ONLY if explicitly allowed (AEGIS_ALLOW_MOCKS=1)
+            from aegis_env import require_mocks
+            require_mocks(f"on-chain transfer ({type(exc).__name__})")
             # Use hashed address, never include private key material in logs/hashes
             sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
             mock_hash = _mock_tx_hash(
@@ -279,6 +281,8 @@ class TransactionProcessor:
             }
 
         except Exception as exc:
+            from aegis_env import require_mocks
+            require_mocks(f"on-chain transferWithProof ({type(exc).__name__})")
             sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
             mock_hash = _mock_tx_hash(sender_id, recipient, amount_eur)
             return {
