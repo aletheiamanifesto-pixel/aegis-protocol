@@ -94,11 +94,9 @@ deployed_addresses.json
 logs/
 
 # Docker
-.dockerignore
 
 # Secrets
 *.pem
 *.key
 *.p12
 *.pfx
-package-lock.json

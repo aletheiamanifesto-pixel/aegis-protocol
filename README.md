@@ -75,12 +75,14 @@ flowchart TD
 ```bash
 git clone https://github.com/aletheiamanifesto-pixel/aegis-protocol
 cd aegis-protocol
-cp .env.example .env          # edit with your settings
+cp .env.example .env    # set at least POSTGRES_PASSWORD and SECRET_KEY (>= 32 chars)
 docker compose up --build
+python scripts/e2e_smoke.py http://localhost:8000 http://localhost:3000   # end-to-end check
 ```
 
-API → `http://localhost:8000`  
-Swagger docs → `http://localhost:8000/docs`
+API → `http://localhost:8000` (Swagger at `/docs`) · Frontend → `http://localhost:3000`.
+Migrations run automatically at API start; Postgres is bound to localhost only.
+CI runs the same stack and smoke test on every PR (`stack-e2e` job).
 
 ### Run locally
 

@@ -311,7 +311,7 @@ def _signed_transfer(acct, to: str, amount_eur: float, chain_id: int = 80002) ->
 
     tx = {"to": Web3.to_checksum_address(os.environ["EURC_TOKEN_ADDRESS"]), "value": 0, "data": data, "nonce": 0, "chainId": chain_id,
           "gas": 100000, "maxFeePerGas": 10**9, "maxPriorityFeePerGas": 10**9, "type": 2}
-    return acct.sign_transaction(tx).rawTransaction.hex()
+    return acct.sign_transaction(tx).raw_transaction.hex()
 
 
 class TestViewingKeys:
