@@ -28,6 +28,10 @@ class User(Base):
     authority_type = Column(String(50), nullable=True)
     # Bumped on logout / password change: every token issued before becomes invalid.
     token_version = Column(Integer, default=0, nullable=False)
+    # Two factors (TOTP). The secret is encrypted at rest; last step used against replay.
+    totp_secret = Column(Text, nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=False)
+    totp_last_step = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -43,7 +47,8 @@ class Wallet(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     address = Column(String(42), unique=True, nullable=False, index=True)
-    encrypted_key = Column(Text, nullable=False)
+    # LEGACY: the server no longer stores private keys (signing happens on the device).
+    encrypted_key = Column(Text, nullable=True)
     balance_eurc = Column(Float, default=0.0, nullable=False)
     nonce = Column(Integer, default=0, nullable=False)
     is_frozen = Column(Boolean, default=False, nullable=False)
@@ -260,3 +265,15 @@ class PoolRelay(Base):
     public_out = Column(Integer, nullable=False, default=0)
     status = Column(String(20), nullable=False, default="submitted")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WalletLinkChallenge(Base):
+    """One-time challenge to prove control of an address by signing it (EIP-191)."""
+
+    __tablename__ = "wallet_link_challenges"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    nonce = Column(String(64), unique=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)

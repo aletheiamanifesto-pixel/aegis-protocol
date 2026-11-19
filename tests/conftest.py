@@ -14,6 +14,9 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-for-test")
 os.environ.setdefault("AEGIS_ALLOW_MOCK_PROOFS", "1")
 # ...and so are the simulated chain/bridge/wallet (see aegis_env.py).
 os.environ.setdefault("AEGIS_ALLOW_MOCKS", "1")
+# Test EURC token: transactions arrive signed by the client for this contract.
+os.environ.setdefault("EURC_TOKEN_ADDRESS", "0x" + "e0" * 20)
+os.environ.setdefault("CHAIN_ID", "80002")
 os.environ.setdefault("RPC_URL", "http://localhost:8545")
 
 

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
 from security import require_owner
-from schemas import WalletCreateRequest, WalletImportRequest
+from schemas import WalletLinkRequest
 
 try:
     from db import get_db
@@ -26,8 +26,6 @@ except ImportError:
 
 try:
     from wallet_service import (
-        create_wallet as _create_wallet,
-        import_wallet as _import_wallet,
         get_balance as _get_balance,
         generate_receive_qr,
         WalletError,
@@ -41,38 +39,54 @@ from fastapi import HTTPException
 router = APIRouter(tags=["wallet"])
 
 
-def _save_wallet(db, current_user: Dict, result: Dict) -> None:
-    """Link the address to the user: it is the basis of every ownership check."""
-    if not _db_available or db is None:
-        return
-    existing = db.query(db_models.Wallet).filter(db_models.Wallet.address == result["address"]).first()
-    if existing is not None:
-        if existing.user_id != int(current_user["user_id"]):
-            raise HTTPException(status_code=409, detail="Address already linked to another account")
-        return
-    db.add(db_models.Wallet(user_id=int(current_user["user_id"]), address=result["address"],
-                            encrypted_key=result["encrypted_key"]))
+LINK_MESSAGE = "AEGIS: link this address to account {user_id}. Nonce: {nonce}"
+
+
+@router.post("/wallet/link/challenge")
+def wallet_link_challenge(current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db)):
+    """Message to sign ON THE DEVICE with the wallet key (valid 10 minutes, single use).
+
+    The server never sees private keys or mnemonics: the wallet is created and kept in the app.
+    """
+    import secrets
+    from datetime import datetime, timedelta
+
+    nonce = secrets.token_hex(16)
+    db.add(db_models.WalletLinkChallenge(user_id=int(current_user["user_id"]), nonce=nonce,
+                                         expires_at=datetime.utcnow() + timedelta(minutes=10)))
     db.commit()
+    return {"nonce": nonce, "message": LINK_MESSAGE.format(user_id=current_user["user_id"], nonce=nonce)}
 
 
-@router.post("/wallet/create")
-def wallet_create(req: WalletCreateRequest, current_user: Dict = Depends(_get_current_user),
-                  db: Session = Depends(get_db)):
-    if not _ws_available:
-        raise HTTPException(status_code=503, detail="Wallet service not available")
-    result = _create_wallet(req.password)
-    _save_wallet(db, current_user, result)
-    return result
+@router.post("/wallet/link")
+def wallet_link(req: WalletLinkRequest, current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db)):
+    """Link an address to the account by proving control of it with an EIP-191 signature."""
+    from datetime import datetime
 
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
 
-@router.post("/wallet/import")
-def wallet_import(req: WalletImportRequest, current_user: Dict = Depends(_get_current_user),
-                  db: Session = Depends(get_db)):
-    if not _ws_available:
-        raise HTTPException(status_code=503, detail="Wallet service not available")
-    result = _import_wallet(req.mnemonic_or_private_key, req.password)
-    _save_wallet(db, current_user, result)
-    return result
+    uid = int(current_user["user_id"])
+    ch = db.query(db_models.WalletLinkChallenge).filter_by(nonce=req.nonce, user_id=uid, used=False).first()
+    if ch is None or ch.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Challenge missing, already used or expired")
+    ch.used = True
+    db.commit()
+    message = LINK_MESSAGE.format(user_id=uid, nonce=req.nonce)
+    try:
+        signer = Account.recover_message(encode_defunct(text=message), signature=req.signature)
+    except Exception:  # noqa: BLE001 - malformed signature
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    if signer.lower() != req.address.lower():
+        raise HTTPException(status_code=403, detail="The signature does not come from this address")
+    existing = db.query(db_models.Wallet).filter(db_models.Wallet.address == signer).first()
+    if existing is not None:
+        if existing.user_id != uid:
+            raise HTTPException(status_code=409, detail="Address already linked to another account")
+        return {"address": signer, "linked": True}
+    db.add(db_models.Wallet(user_id=uid, address=signer, encrypted_key=None))
+    db.commit()
+    return {"address": signer, "linked": True}
 
 
 @router.get("/wallet/mine")

@@ -48,13 +48,22 @@ contract AegisSmartAccount {
     bool public frozen;
     mapping(bytes32 => bool) public usedProofs;
 
+    /// @dev Each recovery is a "round" with its own votes: after execution or cancellation
+    ///      the next one starts clean (previously `voted` was never reset → single-use recovery).
     struct RecoveryRequest {
         address newOwner;
         uint256 approvals;
-        uint256 deadline;
-        mapping(address => bool) voted;
+        uint256 deadline; // by when the approvals must be collected
+        uint256 readyAt; // threshold reached: executable from this moment (owner can cancel)
+        bool active;
     }
     RecoveryRequest private _recovery;
+    uint256 public recoveryRound;
+    mapping(uint256 => mapping(address => bool)) private _recoveryVoted;
+
+    /// @notice Window in which the real owner can cancel a recovery that reached the threshold.
+    uint256 public constant RECOVERY_DELAY = 2 days;
+    uint256 public constant MAX_RECOVERY_WINDOW = 30 days;
 
     event Executed(address indexed to, uint256 value, bytes data);
     event BatchExecuted(uint256 count);
@@ -65,6 +74,9 @@ contract AegisSmartAccount {
     event GuardianAdded(address indexed guardian);
     event GuardianRemoved(address indexed guardian);
     event RecoveryInitiated(address indexed newOwner, uint256 deadline);
+    event RecoveryApproved(address indexed guardian, uint256 approvals);
+    event RecoveryReady(address indexed newOwner, uint256 readyAt);
+    event RecoveryCancelled(uint256 round);
     event RecoveryExecuted(address indexed newOwner);
 
     modifier onlyOwner() {
@@ -170,25 +182,61 @@ contract AegisSmartAccount {
         recoveryThreshold = threshold;
     }
 
+    /// @notice Start a recovery. A recovery that is still open (not expired) cannot be
+    ///         overwritten by a guardian: no "reset" griefing of other people's votes.
     function initiateRecovery(address newOwner, uint256 deadlineIn) external onlyOwnerOrGuardian {
         require(newOwner != address(0), "Zero new owner");
-        _recovery.newOwner = newOwner;
-        _recovery.approvals = 0;
-        _recovery.deadline = block.timestamp + deadlineIn;
+        require(deadlineIn > 0 && deadlineIn <= MAX_RECOVERY_WINDOW, "Invalid window");
+        require(!_recovery.active || block.timestamp >= _recovery.deadline && _recovery.readyAt == 0, "Recovery in progress");
+        recoveryRound++;
+        _recovery = RecoveryRequest({
+            newOwner: newOwner,
+            approvals: 0,
+            deadline: block.timestamp + deadlineIn,
+            readyAt: 0,
+            active: true
+        });
         emit RecoveryInitiated(newOwner, _recovery.deadline);
     }
 
     function approveRecovery() external {
         require(guardians[msg.sender], "Not a guardian");
+        require(_recovery.active, "No active recovery");
         require(block.timestamp < _recovery.deadline, "Recovery expired");
-        require(!_recovery.voted[msg.sender], "Already voted");
-        _recovery.voted[msg.sender] = true;
+        require(!_recoveryVoted[recoveryRound][msg.sender], "Already voted");
+        _recoveryVoted[recoveryRound][msg.sender] = true;
         _recovery.approvals++;
-        if (_recovery.approvals >= recoveryThreshold) {
-            address newOwner = _recovery.newOwner;
-            owner = newOwner;
-            emit RecoveryExecuted(newOwner);
+        emit RecoveryApproved(msg.sender, _recovery.approvals);
+        if (_recovery.approvals >= recoveryThreshold && _recovery.readyAt == 0) {
+            _recovery.readyAt = block.timestamp + RECOVERY_DELAY;
+            emit RecoveryReady(_recovery.newOwner, _recovery.readyAt);
         }
+    }
+
+    /// @notice After the delay, anyone can execute a recovery that reached the threshold.
+    function executeRecovery() external {
+        require(_recovery.active && _recovery.readyAt != 0, "Recovery not ready");
+        require(block.timestamp >= _recovery.readyAt, "Delay not elapsed");
+        address newOwner = _recovery.newOwner;
+        _recovery.active = false;
+        owner = newOwner;
+        emit RecoveryExecuted(newOwner);
+    }
+
+    /// @notice The real owner can cancel a recovery (e.g. compromised guardians).
+    function cancelRecovery() external onlyOwner {
+        require(_recovery.active, "No active recovery");
+        _recovery.active = false;
+        emit RecoveryCancelled(recoveryRound);
+    }
+
+    function getRecovery()
+        external
+        view
+        returns (address newOwner, uint256 approvals, uint256 deadline, uint256 readyAt, bool active, uint256 round)
+    {
+        RecoveryRequest storage r = _recovery;
+        return (r.newOwner, r.approvals, r.deadline, r.readyAt, r.active, recoveryRound);
     }
 
     function freeze() external onlyRegulator {

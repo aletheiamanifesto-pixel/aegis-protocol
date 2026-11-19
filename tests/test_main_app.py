@@ -15,6 +15,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-for-test")
 os.environ.setdefault("RPC_URL", "http://localhost:8545")
 
 import pytest
+from eth_account import Account
+from eth_account.messages import encode_defunct
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -93,6 +95,10 @@ def _register_and_login(client: TestClient, suffix: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 class TestRegister:
+    def test_short_password_rejected(self, client):
+        r = client.post("/auth/register", json={"username": "shortpw", "email": "s@example.com", "password": "Pass123!"})
+        assert r.status_code == 422
+
     def test_register_new_user(self, client):
         r = client.post("/auth/register", json={
             "username": "newuser_reg",
@@ -124,11 +130,11 @@ class TestLogin:
         client.post("/auth/register", json={
             "username": "loginuser",
             "email": "loginuser@example.com",
-            "password": "Pass123!",
+            "password": "Pass123!-long-enough",
         })
         r = client.post("/auth/login", json={
             "username": "loginuser",
-            "password": "Pass123!",
+            "password": "Pass123!-long-enough",
         })
         assert r.status_code == 200
         assert "access_token" in r.json()
@@ -152,18 +158,36 @@ class TestLogin:
 # 3. POST /wallet/create
 # ---------------------------------------------------------------------------
 
-class TestWalletCreate:
-    def test_create_wallet_authenticated(self, client):
-        headers = _register_and_login(client, "_walletcreate")
-        r = client.post("/wallet/create", json={"password": "walletpass"}, headers=headers)
-        # Either 200 with address, or 503 if wallet service unavailable
-        assert r.status_code in (200, 503)
-        if r.status_code == 200:
-            assert "address" in r.json()
+class TestWalletLink:
+    def test_link_wallet_by_signature(self, client):
+        headers = _register_and_login(client, "_walletlink")
+        acct = Account.create()
+        assert _link(client, headers, acct) == acct.address
 
-    def test_create_wallet_unauthenticated(self, client):
-        r = client.post("/wallet/create", json={"password": "walletpass"})
-        assert r.status_code == 401
+    def test_cannot_link_address_without_its_key(self, client):
+        headers = _register_and_login(client, "_walletlink_bad")
+        ch = client.post("/wallet/link/challenge", headers=headers).json()
+        victim, attacker = Account.create(), Account.create()
+        sig = attacker.sign_message(encode_defunct(text=ch["message"])).signature.hex()
+        r = client.post("/wallet/link", json={"address": victim.address, "nonce": ch["nonce"], "signature": sig},
+                        headers=headers)
+        assert r.status_code == 403
+
+    def test_challenge_is_single_use(self, client):
+        headers = _register_and_login(client, "_walletlink_replay")
+        acct = Account.create()
+        ch = client.post("/wallet/link/challenge", headers=headers).json()
+        sig = acct.sign_message(encode_defunct(text=ch["message"])).signature.hex()
+        body = {"address": acct.address, "nonce": ch["nonce"], "signature": sig}
+        assert client.post("/wallet/link", json=body, headers=headers).status_code == 200
+        assert client.post("/wallet/link", json=body, headers=headers).status_code == 400
+
+    def test_server_no_longer_creates_wallets(self, client):
+        headers = _register_and_login(client, "_walletcreate")
+        assert client.post("/wallet/create", json={"password": "x" * 12}, headers=headers).status_code in (404, 405)
+
+    def test_link_unauthenticated(self, client):
+        assert client.post("/wallet/link/challenge").status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -261,10 +285,33 @@ class TestComplianceProfile:
 # 9. POST /viewing-keys/create
 # ---------------------------------------------------------------------------
 
-def _my_wallet(client: TestClient, headers: dict) -> str:
-    r = client.post("/wallet/create", json={"password": "walletpass"}, headers=headers)
-    assert r.status_code == 200
+def _link(client: TestClient, headers: dict, acct) -> str:
+    ch = client.post("/wallet/link/challenge", headers=headers).json()
+    sig = acct.sign_message(encode_defunct(text=ch["message"])).signature.hex()
+    r = client.post("/wallet/link", json={"address": acct.address, "nonce": ch["nonce"], "signature": sig},
+                    headers=headers)
+    assert r.status_code == 200, r.text
     return r.json()["address"]
+
+
+_ACCOUNTS: dict = {}
+
+
+def _my_wallet(client: TestClient, headers: dict) -> str:
+    """Create a wallet ON THE "DEVICE" (the test) and link it by signature."""
+    acct = Account.create()
+    address = _link(client, headers, acct)
+    _ACCOUNTS[address] = acct
+    return address
+
+
+def _signed_transfer(acct, to: str, amount_eur: float, chain_id: int = 80002) -> str:
+    data = "0xa9059cbb" + "00" * 12 + to[2:].lower() + format(int(round(amount_eur * 10**6)), "064x")
+    from web3 import Web3
+
+    tx = {"to": Web3.to_checksum_address(os.environ["EURC_TOKEN_ADDRESS"]), "value": 0, "data": data, "nonce": 0, "chainId": chain_id,
+          "gas": 100000, "maxFeePerGas": 10**9, "maxPriorityFeePerGas": 10**9, "type": 2}
+    return acct.sign_transaction(tx).rawTransaction.hex()
 
 
 class TestViewingKeys:
@@ -293,38 +340,32 @@ class TestViewingKeys:
 # ---------------------------------------------------------------------------
 
 class TestTransactionSend:
-    def test_send_transaction(self, client):
+    TO = "0x1234567890123456789012345678901234567890"
+
+    def test_send_signed_transaction(self, client):
         headers = _register_and_login(client, "_tx")
-        r = client.post("/transactions/send", json={
-            "from_address": _my_wallet(client, headers),
-            "to_address": "0x1234567890123456789012345678901234567890",
-            "amount": 100.0,
-            "encrypted_key": "0x" + "a" * 64,
-            "password": "walletpass",
-        }, headers=headers)
-        # 200 (mock tx), 400 (compliance), or 503 (service unavailable)
-        assert r.status_code in (200, 400, 503)
+        addr = _my_wallet(client, headers)
+        r = client.post("/transactions/send", json={"signed_tx": _signed_transfer(_ACCOUNTS[addr], self.TO, 100.0)},
+                        headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["sender"] == addr and body["recipient"].lower() == self.TO.lower() and body["amount"] == 100.0
 
     def test_send_transaction_unauthenticated(self, client):
-        r = client.post("/transactions/send", json={
-            "from_address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-            "to_address": "0x1234567890123456789012345678901234567890",
-            "amount": 100.0,
-            "encrypted_key": "0x" + "a" * 64,
-            "password": "walletpass",
-        })
+        r = client.post("/transactions/send", json={"signed_tx": "0x00"})
         assert r.status_code == 401
 
     def test_send_large_transaction_without_kyc(self, client):
         """Transactions exceeding single_tx_limit without KYC should be rejected by compliance."""
         headers = _register_and_login(client, "_tx_large")
-        r = client.post("/transactions/send", json={
-            "from_address": _my_wallet(client, headers),
-            "to_address": "0x1234567890123456789012345678901234567890",
-            "amount": 6000.0,  # Exceeds single_tx_limit (5000) without KYC
-            "encrypted_key": "0x" + "a" * 64,
-            "password": "walletpass",
-        }, headers=headers)
-        # Either compliance rejection (400) or service unavailable (503)
-        assert r.status_code in (400, 503)
+        addr = _my_wallet(client, headers)
+        r = client.post("/transactions/send", json={"signed_tx": _signed_transfer(_ACCOUNTS[addr], self.TO, 6000.0)},
+                        headers=headers)
+        assert r.status_code == 400
 
+    def test_tx_for_other_contract_or_chain_rejected(self, client):
+        headers = _register_and_login(client, "_tx_bad")
+        addr = _my_wallet(client, headers)
+        wrong_chain = _signed_transfer(_ACCOUNTS[addr], self.TO, 1.0, chain_id=1)
+        assert client.post("/transactions/send", json={"signed_tx": wrong_chain}, headers=headers).status_code == 400
+        assert client.post("/transactions/send", json={"signed_tx": "0xdeadbeef"}, headers=headers).status_code == 400

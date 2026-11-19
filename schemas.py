@@ -7,36 +7,32 @@ schemas.py - Pydantic request/response models for AEGIS Protocol API.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    email: str
-    password: str
+    username: str = Field(min_length=3, max_length=50)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=128)
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    totp_code: Optional[str] = None
 
 
-class WalletCreateRequest(BaseModel):
-    password: str
-
-
-class WalletImportRequest(BaseModel):
-    mnemonic_or_private_key: str
-    password: str
+class WalletLinkRequest(BaseModel):
+    address: str
+    nonce: str
+    signature: str  # EIP-191 signature of the challenge message, made on the device
 
 
 class SendTransactionRequest(BaseModel):
-    from_address: str
-    to_address: str
-    amount: float
-    encrypted_key: str
-    password: str
+    """Transaction ALREADY SIGNED on the device (EIP-1559 raw tx): the key never travels."""
+    signed_tx: str
     proof_hash: Optional[str] = None
+    totp_code: Optional[str] = None
 
 
 class KYCRequest(BaseModel):
@@ -72,6 +68,7 @@ class WithdrawRequest(BaseModel):
     amount: float
     wallet_address: str
     iban: str
+    totp_code: str  # withdrawals always require the second factor
 
 
 class SchedulePaymentRequest(BaseModel):

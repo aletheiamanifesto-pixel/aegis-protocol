@@ -13,6 +13,8 @@ pragma solidity ^0.8.20;
 interface IAegisEUR {
     function mint(address to, uint256 amount) external;
     function burn(address from, uint256 amount) external;
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
 }
@@ -38,8 +40,22 @@ contract AegisVault {
         mapping(address => bool) voted;
     }
     mapping(bytes32 => Operation) private _operations;
-    /// @dev Bumped on every executed withdrawal: two identical withdrawals are two distinct operations.
-    uint256 public withdrawNonce;
+    /// @dev Withdrawals: the USER puts the tokens in escrow in the vault (requestWithdrawal), the signers
+    ///      can only burn THOSE tokens after paying (completeWithdrawal) or return them
+    ///      (rejectWithdrawal). Nobody can burn another person's balance anymore.
+    enum WithdrawalStatus { None, Pending, Completed, Refunded }
+    struct Withdrawal {
+        address user;
+        uint256 amount;
+        bytes32 payoutRefHash; // hash of the bank payout details chosen by the user
+        uint64 createdAt;
+        WithdrawalStatus status;
+    }
+    mapping(uint256 => Withdrawal) public withdrawals;
+    uint256 public withdrawalCount;
+    uint256 public totalEscrowed;
+    /// @notice After this time a request that was never completed can be taken back by the user.
+    uint256 public constant WITHDRAWAL_TIMEOUT = 7 days;
 
     // ---- Independent reserve attestation (bank / auditor / Proof-of-Reserve oracle) ----
     address public attestor;
@@ -51,8 +67,10 @@ contract AegisVault {
     uint256 public constant ATTESTATION_MAX_AGE = 1 days;
 
     event Deposited(address indexed user, uint256 amount, bytes32 txReference);
-    /// @dev `payoutRef` is a hash/reference of the bank transfer: never IBANs or personal data on-chain (GDPR).
-    event Withdrawn(address indexed user, uint256 amount, bytes32 payoutRef);
+    event WithdrawalRequested(uint256 indexed id, address indexed user, uint256 amount, bytes32 payoutRefHash);
+    /// @dev `bankTxRef` is a reference of the bank transfer: never IBANs or personal data on-chain (GDPR).
+    event Withdrawn(uint256 indexed id, address indexed user, uint256 amount, bytes32 bankTxRef);
+    event WithdrawalRefunded(uint256 indexed id, address indexed user, uint256 amount);
     event OperationApproved(bytes32 indexed opId, address indexed signer, uint256 approvals, uint256 required);
     event ReserveProven(uint256 totalSupply, uint256 eurReserve, uint256 ratio);
     event ReserveAttested(uint256 reserve, bytes32 reportHash, uint256 timestamp);
@@ -114,19 +132,57 @@ contract AegisVault {
         emit Deposited(user, amount, txRef);
     }
 
-    /// @notice Approve (and, at the threshold, execute) the burn + EUR payout.
-    function withdraw(address user, uint256 amount, bytes32 payoutRef) external whenNotPaused onlySigner {
-        require(user != address(0), "User zero");
+    /// @notice The USER requests a withdrawal: the tokens leave their balance and are held in escrow
+    ///         by the vault (requires approve). `payoutRefHash` binds the request to the payout details.
+    function requestWithdrawal(uint256 amount, bytes32 payoutRefHash) external whenNotPaused returns (uint256 id) {
         require(amount > 0, "Zero amount");
-        require(aegisEUR.balanceOf(user) >= amount, "Insufficient AEGIS EUR");
-        bytes32 opId = keccak256(abi.encode("WITHDRAW", user, amount, payoutRef, withdrawNonce));
+        require(payoutRefHash != bytes32(0), "Missing payout ref");
+        require(aegisEUR.transferFrom(msg.sender, address(this), amount), "Escrow failed");
+        id = ++withdrawalCount;
+        withdrawals[id] = Withdrawal(msg.sender, amount, payoutRefHash, uint64(block.timestamp), WithdrawalStatus.Pending);
+        totalEscrowed += amount;
+        emit WithdrawalRequested(id, msg.sender, amount, payoutRefHash);
+    }
+
+    /// @notice Signers (multisig) confirm the EUR payout and burn ONLY the tokens in escrow
+    ///         for this request. `payoutRefHash` must match the one chosen by the user.
+    function completeWithdrawal(uint256 id, bytes32 payoutRefHash, bytes32 bankTxRef) external whenNotPaused onlySigner {
+        Withdrawal storage w = withdrawals[id];
+        require(w.status == WithdrawalStatus.Pending, "Not pending");
+        require(w.payoutRefHash == payoutRefHash, "Payout ref mismatch");
+        bytes32 opId = keccak256(abi.encode("WITHDRAW", id, payoutRefHash, bankTxRef));
         if (!_approve(opId)) return;
 
-        withdrawNonce++;
-        totalEURWithdrawn += amount;
-        aegisEUR.burn(user, amount);
+        w.status = WithdrawalStatus.Completed;
+        totalEscrowed -= w.amount;
+        totalEURWithdrawn += w.amount;
+        aegisEUR.burn(address(this), w.amount);
+        emit Withdrawn(id, w.user, w.amount, bankTxRef);
+    }
 
-        emit Withdrawn(user, amount, payoutRef);
+    /// @notice Signers (multisig) reject a request: the tokens go back to the user.
+    function rejectWithdrawal(uint256 id) external onlySigner {
+        Withdrawal storage w = withdrawals[id];
+        require(w.status == WithdrawalStatus.Pending, "Not pending");
+        if (!_approve(keccak256(abi.encode("REJECT_WITHDRAW", id)))) return;
+        _refund(id);
+    }
+
+    /// @notice If the payout does not arrive within WITHDRAWAL_TIMEOUT, the user takes back their tokens.
+    function cancelWithdrawal(uint256 id) external {
+        Withdrawal storage w = withdrawals[id];
+        require(w.status == WithdrawalStatus.Pending, "Not pending");
+        require(msg.sender == w.user, "Not your withdrawal");
+        require(block.timestamp >= w.createdAt + WITHDRAWAL_TIMEOUT, "Timeout not reached");
+        _refund(id);
+    }
+
+    function _refund(uint256 id) internal {
+        Withdrawal storage w = withdrawals[id];
+        w.status = WithdrawalStatus.Refunded;
+        totalEscrowed -= w.amount;
+        require(aegisEUR.transfer(w.user, w.amount), "Refund failed");
+        emit WithdrawalRefunded(id, w.user, w.amount);
     }
 
     /// @dev Records the caller's vote. Returns true when the operation reaches the threshold

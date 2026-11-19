@@ -133,8 +133,8 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 ### Wallet
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/wallet/create` | Create a new HD wallet |
-| `POST` | `/wallet/import` | Import from mnemonic or private key |
+| `POST` | `/wallet/link/challenge` | One-time message to sign with the wallet key (on the device) |
+| `POST` | `/wallet/link` | Link an address by EIP-191 signature (the server never sees keys or mnemonics) |
 | `GET`  | `/wallet/balance/{address}` | Get AEGIS-EUR balance |
 | `GET`  | `/wallet/transactions/{address}` | List wallet transactions |
 | `GET`  | `/wallet/qr/{address}` | QR code PNG for receiving |
@@ -142,7 +142,7 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 ### Transactions
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/transactions/send` | Send AEGIS-EUR (compliance-checked) |
+| `POST` | `/transactions/send` | Broadcast an EURC transfer **signed on the device** (sender/recipient/amount read from the signed tx; compliance-checked; 2FA if enabled) |
 | `GET`  | `/transactions/{tx_hash}/status` | Transaction status |
 
 ### Compliance (MiCA)
@@ -178,20 +178,22 @@ Proofs are generated **on the user's device** (`sdk/aegis-core.mjs` + Noir/bb.js
 ### Accounts & roles
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/auth/login` | Login (5 failures in 15 min → 429) |
+| `POST` | `/auth/login` | Login (5 failures in 15 min → 429; `totp_code` when 2FA is on) |
+| `POST` | `/auth/2fa/setup` · `/enable` · `/disable` | TOTP second factor (RFC 6238, anti-replay) |
 | `POST` | `/auth/logout` | Revoke all of the user's tokens |
 | `GET`  | `/auth/me` | Current identity and role |
 | `POST` | `/admin/users/{id}/role` | Assign `user` / `compliance` / `authority` / `admin` (admin only) |
 
 Every address-based endpoint checks that the address belongs to a wallet of the
-authenticated user (`/wallet/create` and `/wallet/import` link it to the account).
+authenticated user (linked with `/wallet/link`). Keys are generated and kept on the device;
+`wallet_service.py` (scrypt + salt, 12+ character passwords) is for client-side tooling only.
 Bootstrap the first admin with `python scripts/create_admin.py <username>`.
 
 ### Banking
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/banking/deposit` | Deposit EUR → mint AEGIS-EUR tokens |
-| `POST` | `/banking/withdraw` | Burn tokens → withdraw EUR via IBAN |
+| `POST` | `/banking/withdraw` | Withdraw EUR (requires active 2FA + code). On-chain: the user escrows tokens with `AegisVault.requestWithdrawal`, signers can only burn that escrow after paying (`completeWithdrawal`), or refund; after 7 days the user can take them back |
 | `GET`  | `/banking/statement` | Account statement |
 | `POST` | `/banking/schedule-payment` | Schedule a one-time future payment |
 | `POST` | `/banking/recurring-payment` | Set up recurring payment |

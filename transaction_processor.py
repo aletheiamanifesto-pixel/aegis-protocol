@@ -73,6 +73,10 @@ def _mock_tx_hash(sender: str, recipient: str, amount: float) -> str:
     return "0x" + hashlib.sha256(raw).hexdigest()
 
 
+class TransactionError(Exception):
+    pass
+
+
 class TransactionProcessor:
     """Handles all on-chain EURC operations with graceful dev-mode fallback."""
 
@@ -103,73 +107,60 @@ class TransactionProcessor:
         except Exception:
             return 0.0
 
-    def send_eurc(
-        self,
-        sender_private_key: str,
-        recipient: str,
-        amount_eur: float,
-        proof_hash: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Send EURC from sender to recipient.
+    # ------------------------------------------------------------------
+    # Client-side signed transfers: the private key NEVER reaches the server
+    # ------------------------------------------------------------------
 
-        Returns:
-            dict with tx_hash, status, amount, recipient.
+    def decode_signed_transfer(self, signed_tx: str) -> Dict[str, Any]:
+        """Decode an EIP-1559 tx signed on the device and verify that it is an EURC transfer().
+
+        Return sender (recovered from the signature), recipient, amount in token units and nonce.
         """
+        from eth_account import Account
+        from eth_account._utils.typed_transactions import TypedTransaction
+
+        from hexbytes import HexBytes
+
         try:
-            from web3 import Web3
+            raw = HexBytes(bytes.fromhex(signed_tx.removeprefix("0x")))
+            sender = Account.recover_transaction(raw)
+            fields = TypedTransaction.from_bytes(raw).as_dict()
+        except Exception as exc:  # noqa: BLE001 - malformed or non EIP-1559 input
+            raise TransactionError(f"invalid signed transaction: {exc}") from exc
+        if int(fields.get("chainId", -1)) != CHAIN_ID:
+            raise TransactionError("wrong chainId")
+        to = fields.get("to") or b""
+        to = ("0x" + bytes(to).hex()) if isinstance(to, (bytes, bytearray)) else str(to)
+        to = "0x" + to.lower().removeprefix("0x").removeprefix("0x")
+        if not EURC_TOKEN_ADDRESS or to.lower() != EURC_TOKEN_ADDRESS.lower():
+            raise TransactionError("the transaction is not addressed to the EURC token")
+        if int(fields.get("value", 0)) != 0:
+            raise TransactionError("the transaction must not move native coin")
+        data = fields.get("data") or b""
+        if isinstance(data, str):
+            data = bytes.fromhex(data.removeprefix("0x"))
+        if len(data) != 4 + 32 + 32 or data[:4] != bytes.fromhex("a9059cbb"):
+            raise TransactionError("only transfer(address,uint256) is accepted")
+        data = bytes(data)
+        recipient = "0x" + data[4 + 12:4 + 32].hex()
+        amount_raw = int.from_bytes(data[36:68], "big")
+        if amount_raw == 0:
+            raise TransactionError("zero amount")
+        return {"sender": sender, "recipient": recipient, "amount_raw": amount_raw,
+                "amount": amount_raw / (10 ** EURC_DECIMALS), "nonce": int(fields["nonce"]), "raw": raw}
+
+    def broadcast_signed(self, raw: bytes) -> Dict[str, Any]:
+        """Broadcast an already signed tx. Without a node: simulation only in development."""
+        try:
             w3 = self._web3()
             if not w3.is_connected():
                 raise RuntimeError("Node not reachable")
-
-            account = w3.eth.account.from_key(sender_private_key)
-            contract = self._eurc_contract(w3)
-
-            amount_raw = int(amount_eur * (10 ** EURC_DECIMALS))
-            recipient_cs = Web3.to_checksum_address(recipient)
-
-            tx = contract.functions.transfer(recipient_cs, amount_raw).build_transaction(
-                {
-                    "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                    "chainId": CHAIN_ID,
-                    "gas": 100000,
-                    "maxFeePerGas": w3.eth.gas_price * 2,
-                    "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-                }
-            )
-
-            signed = w3.eth.account.sign_transaction(tx, sender_private_key)
-            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
-
-            return {
-                "tx_hash": tx_hash.hex(),
-                "status": "pending",
-                "amount": amount_eur,
-                "recipient": recipient,
-                "proof_hash": proof_hash,
-            }
-
-        except Exception as exc:
-            # Simulated result ONLY if explicitly allowed (AEGIS_ALLOW_MOCKS=1)
+            return {"tx_hash": w3.eth.send_raw_transaction(raw).hex(), "status": "pending"}
+        except Exception as exc:  # noqa: BLE001
             from aegis_env import require_mocks
-            require_mocks(f"on-chain transfer ({type(exc).__name__})")
-            # Use hashed address, never include private key material in logs/hashes
-            sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
-            mock_hash = _mock_tx_hash(
-                sender_id,
-                recipient,
-                amount_eur,
-            )
-            return {
-                "tx_hash": mock_hash,
-                "status": "mock_pending",
-                "amount": amount_eur,
-                "recipient": recipient,
-                "proof_hash": proof_hash,
-                "dev_mode": True,
-                "error": str(exc),
-            }
+
+            require_mocks(f"broadcast ({type(exc).__name__})")
+            return {"tx_hash": "0x" + hashlib.sha256(raw).hexdigest(), "status": "mock_pending", "dev_mode": True}
 
     def get_transaction_status(self, tx_hash: str) -> Dict[str, Any]:
         """Return transaction status from the blockchain."""
@@ -191,106 +182,3 @@ class TransactionProcessor:
             }
         except Exception as exc:
             return {"tx_hash": tx_hash, "status": "unknown", "error": str(exc)}
-
-    def create_wallet(self) -> Dict[str, str]:
-        """Generate a new Ethereum wallet."""
-        try:
-            from eth_account import Account
-            acct = Account.create()
-            return {
-                "address": acct.address,
-                "private_key": acct.key.hex(),
-            }
-        except Exception:
-            import secrets
-            pk = secrets.token_hex(32)
-            address = "0x" + hashlib.sha256(pk.encode()).hexdigest()[:40]
-            return {"address": address, "private_key": pk, "dev_mode": True}
-
-    def import_wallet(self, private_key: str) -> Dict[str, str]:
-        """Derive address from a private key."""
-        try:
-            from eth_account import Account
-            acct = Account.from_key(private_key)
-            return {"address": acct.address}
-        except Exception:
-            address = "0x" + hashlib.sha256(private_key.encode()).hexdigest()[:40]
-            return {"address": address, "dev_mode": True}
-
-    def send_eurc_with_proof(
-        self,
-        sender_private_key: str,
-        recipient: str,
-        amount_eur: float,
-        proof: Optional[bytes] = None,
-    ) -> Dict[str, Any]:
-        """
-        Send EURC using ``transferWithProof`` when a ZK proof is provided or
-        the amount is >= MICA_ZK_THRESHOLD, otherwise fall back to a plain
-        ``transfer``.
-
-        Args:
-            sender_private_key: Hex-encoded private key of the sender.
-            recipient: Checksummed recipient Ethereum address.
-            amount_eur: Amount to send in EUR (float).
-            proof: Raw ZK proof bytes. Required when amount >= MICA_ZK_THRESHOLD.
-
-        Returns:
-            dict with tx_hash, status, amount, recipient, and method used.
-        """
-        use_proof_transfer = proof is not None or amount_eur >= MICA_ZK_THRESHOLD
-        if not use_proof_transfer:
-            result = self.send_eurc(sender_private_key, recipient, amount_eur)
-            result["method"] = "transfer"
-            return result
-
-        try:
-            from web3 import Web3
-            w3 = self._web3()
-            if not w3.is_connected():
-                raise RuntimeError("Node not reachable")
-
-            account = w3.eth.account.from_key(sender_private_key)
-            contract = self._eurc_contract(w3)
-            amount_raw = int(amount_eur * (10 ** EURC_DECIMALS))
-            recipient_cs = Web3.to_checksum_address(recipient)
-            proof_bytes = proof if proof is not None else b"\x00"
-
-            tx = contract.functions.transferWithProof(
-                recipient_cs, amount_raw, proof_bytes
-            ).build_transaction(
-                {
-                    "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
-                    "chainId": CHAIN_ID,
-                    "gas": 200000,
-                    "maxFeePerGas": w3.eth.gas_price * 2,
-                    "maxPriorityFeePerGas": w3.to_wei(1, "gwei"),
-                }
-            )
-
-            signed = w3.eth.account.sign_transaction(tx, sender_private_key)
-            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
-
-            return {
-                "tx_hash": tx_hash.hex(),
-                "status": "pending",
-                "amount": amount_eur,
-                "recipient": recipient,
-                "method": "transferWithProof",
-            }
-
-        except Exception as exc:
-            from aegis_env import require_mocks
-            require_mocks(f"on-chain transferWithProof ({type(exc).__name__})")
-            sender_id = hashlib.sha256(sender_private_key.encode()).hexdigest()[:16] if sender_private_key else "unknown"
-            mock_hash = _mock_tx_hash(sender_id, recipient, amount_eur)
-            return {
-                "tx_hash": mock_hash,
-                "status": "mock_pending",
-                "amount": amount_eur,
-                "recipient": recipient,
-                "method": "transferWithProof",
-                "dev_mode": True,
-                "error": str(exc),
-            }

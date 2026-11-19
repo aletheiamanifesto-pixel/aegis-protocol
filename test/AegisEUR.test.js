@@ -110,34 +110,36 @@ describe("AegisEUR", function () {
   describe("Burning", function () {
     beforeEach(async function () {
       await aegisEUR.connect(vault).mint(alice.address, 2000n);
+      await aegisEUR.connect(vault).mint(vault.address, 2000n); // tokens in escrow at the vault
     });
 
-    it("minter can burn tokens", async function () {
-      await aegisEUR.connect(vault).burn(alice.address, 500n);
-      expect(await aegisEUR.balanceOf(alice.address)).to.equal(1500n);
-      expect(await aegisEUR.totalSupply()).to.equal(1500n);
+    it("minter burns its own balance (escrow)", async function () {
+      await aegisEUR.connect(vault).burn(vault.address, 500n);
+      expect(await aegisEUR.balanceOf(vault.address)).to.equal(1500n);
+      expect(await aegisEUR.totalSupply()).to.equal(3500n);
+    });
+
+    it("minter CANNOT burn a user's balance", async function () {
+      await expect(aegisEUR.connect(vault).burn(alice.address, 500n)).to.be.revertedWith("Can only burn own balance");
     });
 
     it("non-minter cannot burn", async function () {
-      await expect(
-        aegisEUR.connect(alice).burn(alice.address, 100n)
-      ).to.be.revertedWith("Not minter");
+      await expect(aegisEUR.connect(alice).burn(alice.address, 100n)).to.be.revertedWith("Not minter");
     });
 
     it("cannot burn more than balance", async function () {
-      await expect(
-        aegisEUR.connect(vault).burn(alice.address, 3000n)
-      ).to.be.revertedWith("Insufficient balance");
+      await expect(aegisEUR.connect(vault).burn(vault.address, 3000n)).to.be.revertedWith("Insufficient balance");
     });
 
     it("emits Transfer and Burn events on burn", async function () {
-      await expect(aegisEUR.connect(vault).burn(alice.address, 500n))
+      await expect(aegisEUR.connect(vault).burn(vault.address, 500n))
         .to.emit(aegisEUR, "Transfer")
-        .withArgs(alice.address, ethers.ZeroAddress, 500n)
+        .withArgs(vault.address, ethers.ZeroAddress, 500n)
         .and.to.emit(aegisEUR, "Burn")
-        .withArgs(alice.address, 500n);
+        .withArgs(vault.address, 500n);
     });
   });
+
 
   // ─── Transfers ────────────────────────────────────────────────────────────────
 

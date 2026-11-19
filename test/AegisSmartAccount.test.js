@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 // ─── Minimal mocks deployed inline ───────────────────────────────────────────
 
@@ -344,17 +345,42 @@ describe("AegisSmartAccount", function () {
         .to.emit(account, "RecoveryInitiated");
     });
 
-    it("guardian can approve recovery and ownership transfers", async function () {
+    it("threshold reached → executable only after the delay", async function () {
       await account.connect(guardian).initiateRecovery(alice.address, 3600);
-      await account.connect(guardian).approveRecovery();
+      await expect(account.connect(guardian).approveRecovery()).to.emit(account, "RecoveryReady");
+      await expect(account.executeRecovery()).to.be.revertedWith("Delay not elapsed");
+      await time.increase(2 * 24 * 3600);
+      await expect(account.executeRecovery()).to.emit(account, "RecoveryExecuted").withArgs(alice.address);
       expect(await account.owner()).to.equal(alice.address);
     });
 
-    it("emits RecoveryExecuted when threshold met", async function () {
+    it("recovery can be repeated (votes reset each round)", async function () {
       await account.connect(guardian).initiateRecovery(alice.address, 3600);
-      await expect(account.connect(guardian).approveRecovery())
-        .to.emit(account, "RecoveryExecuted")
-        .withArgs(alice.address);
+      await account.connect(guardian).approveRecovery();
+      await time.increase(2 * 24 * 3600);
+      await account.executeRecovery();
+      // second recovery: the same guardian can vote again
+      await account.connect(guardian).initiateRecovery(owner.address, 3600);
+      await account.connect(guardian).approveRecovery();
+      await time.increase(2 * 24 * 3600);
+      await account.executeRecovery();
+      expect(await account.owner()).to.equal(owner.address);
+    });
+
+    it("a guardian cannot reset an open recovery (griefing)", async function () {
+      await account.connect(guardian).initiateRecovery(alice.address, 3600);
+      await expect(account.connect(guardian).initiateRecovery(guardian.address, 3600)).to.be.revertedWith(
+        "Recovery in progress"
+      );
+    });
+
+    it("the owner can cancel a malicious recovery during the delay", async function () {
+      await account.connect(guardian).initiateRecovery(alice.address, 3600);
+      await account.connect(guardian).approveRecovery();
+      await account.connect(owner).cancelRecovery();
+      await time.increase(2 * 24 * 3600);
+      await expect(account.executeRecovery()).to.be.revertedWith("Recovery not ready");
+      expect(await account.owner()).to.equal(owner.address);
     });
   });
 
