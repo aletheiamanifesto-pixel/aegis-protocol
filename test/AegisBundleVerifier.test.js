@@ -1,5 +1,7 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
+import { expect } from "chai";
+import { network } from "hardhat";
+
+const { ethers, networkHelpers } = await network.create();
 
 // ─── Merkle helpers ───────────────────────────────────────────────────────────
 // The contract uses canonical (sorted) ordering: smaller node goes left before hashing.

@@ -1,5 +1,7 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
+import { expect } from "chai";
+import { network } from "hardhat";
+
+const { ethers, networkHelpers } = await network.create();
 
 describe("ProofMintRegistry", function () {
   let registry;
@@ -61,11 +63,11 @@ describe("ProofMintRegistry", function () {
     const hash = ethers.keccak256(ethers.toUtf8Bytes("dpp-v1"));
     await expect(
       registry.connect(other).createPassport("SKU-001", hash, "cid-v1")
-    ).to.be.reverted;
+    ).to.revert(ethers);
 
     await registry.connect(brand).createPassport("SKU-001", hash, "cid-v1");
     await expect(
       registry.connect(other).updatePassport(1, hash, "cid-v2")
-    ).to.be.reverted;
+    ).to.revert(ethers);
   });
 });

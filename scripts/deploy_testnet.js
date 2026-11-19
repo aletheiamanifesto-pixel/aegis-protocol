@@ -1,12 +1,15 @@
 // scripts/deploy_testnet.js — Deploy + verify all AEGIS Protocol contracts on a public testnet
-const { ethers, run } = require("hardhat");
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
+import hre, { network } from "hardhat";
+import { verifyContract } from "@nomicfoundation/hardhat-verify/verify";
+
+const { ethers } = await network.getOrCreate();
 
 async function verify(address, constructorArguments) {
   console.log(`Verifying ${address}...`);
   try {
-    await run("verify:verify", { address, constructorArguments });
+    await verifyContract({ address, constructorArgs: constructorArguments }, hre);
     console.log("Verified:", address);
   } catch (err) {
     if (err.message.toLowerCase().includes("already verified")) {
@@ -84,7 +87,7 @@ async function main() {
   console.log("\n=== Deployment Summary ===");
   console.log(JSON.stringify(addresses, null, 2));
 
-  const outPath = path.join(__dirname, "..", "deployed_addresses.json");
+  const outPath = path.join(import.meta.dirname, "..", "deployed_addresses.json");
   fs.writeFileSync(outPath, JSON.stringify(addresses, null, 2));
   console.log("\nAddresses saved to deployed_addresses.json");
 
