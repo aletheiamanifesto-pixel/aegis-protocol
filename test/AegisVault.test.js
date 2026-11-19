@@ -1,6 +1,8 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
+import { expect } from "chai";
+import { network } from "hardhat";
+
+const { ethers, networkHelpers } = await network.create();
+const { time } = networkHelpers;
 
 describe("AegisVault", function () {
   let AegisEUR, AegisVault;
@@ -171,7 +173,7 @@ describe("AegisVault", function () {
 
     it("without approve the request fails, and zero amount/ref are rejected", async function () {
       await aegisEUR.connect(alice).approve(await vault.getAddress(), 0n);
-      await expect(vault.connect(alice).requestWithdrawal(100n, payout)).to.be.reverted;
+      await expect(vault.connect(alice).requestWithdrawal(100n, payout)).to.revert(ethers);
       await expect(vault.connect(alice).requestWithdrawal(0n, payout)).to.be.revertedWith("Zero amount");
       await expect(vault.connect(alice).requestWithdrawal(1n, ethers.ZeroHash)).to.be.revertedWith("Missing payout ref");
     });

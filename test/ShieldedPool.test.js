@@ -1,11 +1,13 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
-const path = require("path");
-const { pathToFileURL } = require("url");
+import { expect } from "chai";
+import { network } from "hardhat";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { ethers, networkHelpers } = await network.create();
+const { time } = networkHelpers;
 
 // The ESM SDK and helpers are shared with the circuit tests (noir_circuits/test).
-const importEsm = (p) => import(pathToFileURL(path.join(__dirname, "..", p)).href);
+const importEsm = (p) => import(pathToFileURL(path.join(import.meta.dirname, "..", p)).href);
 
 describe("Poseidon2.sol", function () {
   let harness, aegis;

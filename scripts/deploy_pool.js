@@ -12,7 +12,10 @@
 //                TVL_CAP, MAX_DEPOSIT_PER_TX (token units, default 50,000 and 1,000 EUR at 6 decimals)
 //
 //   npx hardhat run scripts/deploy_pool.js --network amoy
-const { ethers } = require("hardhat");
+import { network } from "hardhat";
+import { deployHonkVerifier } from "./lib/deploy_verifier.js";
+
+const { ethers } = await network.getOrCreate();
 
 const need = (k) => {
   const v = process.env[k];
@@ -25,7 +28,6 @@ async function main() {
   const decimals = 6n;
   const eur = (n) => BigInt(n) * 10n ** decimals;
 
-  const { deployHonkVerifier } = require("./lib/deploy_verifier");
   const verifier = await deployHonkVerifier(ethers, "SpendVerifier");
   console.log("SpendVerifier:", await verifier.getAddress());
 
