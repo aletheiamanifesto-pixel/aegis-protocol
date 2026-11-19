@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
 from security import require_roles
-from schemas import KYCRequest, ProofGenerateRequest
+from schemas import KYCRequest
 
 try:
     from db import get_db
@@ -74,6 +74,7 @@ class KYCDecision(BaseModel):
     approved: bool
     tier: int = Field(default=1, ge=0, le=3)
     provider_ref: Optional[str] = None
+    country: Optional[str] = Field(default=None, min_length=2, max_length=2, description="ISO country verified")
     reason: str = ""
 
 
@@ -85,6 +86,7 @@ def _apply_decision(db, user_id: int, decision: KYCDecision, actor: str) -> Dict
     profile.kyc_verified = decision.approved
     profile.kyc_tier = decision.tier if decision.approved else 0
     profile.kyc_provider_ref = decision.provider_ref
+    profile.kyc_country = decision.country.upper() if decision.country else profile.kyc_country
     profile.last_kyc_at = datetime.utcnow()
     db.add(db_models.AuditLog(user_id=user_id, action="kyc_decision", resource_type="kyc",
                               details={"by": actor, "approved": decision.approved, "tier": profile.kyc_tier,
@@ -163,21 +165,4 @@ def compliance_profile(
         "daily_limit": 10000.0,
         "single_tx_limit": 5000.0,
         "risk_level": "low",
-    }
-
-
-@router.post("/compliance/proof/generate")
-def compliance_proof_generate(
-    req: ProofGenerateRequest,
-    current_user: Dict = Depends(_get_current_user),
-):
-    if not _ce_available:
-        raise HTTPException(status_code=503, detail="Compliance engine not available")
-    engine = ComplianceEngine()
-    proof = engine.generate_zk_proof_stub(req.sender, req.amount, req.purpose)
-    return {
-        "proof_hash": proof.proof_hash,
-        "public_inputs": proof.public_inputs,
-        "valid_until": proof.valid_until,
-        "generated_at": proof.generated_at,
     }

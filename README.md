@@ -111,7 +111,8 @@ yet**: deploy with `npm run deploy` / `npm run deploy:pool` and record the addre
 
 | Contract | Description |
 |----------|-------------|
-| `AegisEUR.sol` | ERC-20 EUR stablecoin with ZK proof transfers, Pedersen commitments, MiCA freeze/unfreeze |
+| `AegisEUR.sol` | ERC-20 EUR token for the "own EMT" strategy (needs a licensed issuer); balances are public, use `ShieldedPool` for confidentiality |
+| `ShieldedPool.sol` | Confidential pool for any ERC-20 (EURC/EURe/AegisEUR): ZK-verified notes, KYC in the proof, graduated disclosure |
 | `AegisVault.sol` | Reserve vault with 1:1 EUR backing, multi-sig operations, on-chain audit reports |
 | `AegisBundleVerifier.sol` | Merkle tree bundle verification for batched transactions |
 | `NoirVerifier.sol` | On-chain ZK proof verifier (Noir / UltraPlonk) |
@@ -151,13 +152,17 @@ The API runs on FastAPI with automatic OpenAPI docs at `/docs`.
 | `POST` | `/compliance/kyc/{user_id}/decision` | Approve/reject KYC (role `compliance`/`admin`, not on yourself) |
 | `POST` | `/compliance/kyc/webhook` | KYC provider result, HMAC-signed (`X-KYC-Signature`, `KYC_WEBHOOK_SECRET`) |
 | `GET`  | `/compliance/profile` | Get compliance profile |
-| `POST` | `/compliance/proof/generate` | Generate ZK proof stub |
 
-### ZK Proofs
+### ZK proofs & ShieldedPool
+Proofs are generated **on the user's device** (`sdk/aegis-core.mjs` + Noir/bb.js) and verified
+**on-chain** by `ShieldedPool`; the server never sees spending secrets or note contents.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/proof/generate` | Generate ZK proof |
-| `POST` | `/proof/verify` | Verify ZK proof hash |
+| `GET`  | `/pool/issuer` | KYC issuer public key (register with `ShieldedPool.setIssuer`) and relayer address |
+| `POST` | `/pool/credential` | Signed KYC credential for the `spend` circuit (verified customers only; tier/jurisdiction from the verification) |
+| `POST` | `/pool/relay` | Relay a proven transaction to `ShieldedPool.transact` (simulated first, recorded in the operator register) |
+| `GET`  | `/pool/relays/mine` | The caller's relayed transactions |
 
 ### Viewing Keys & regulatory access
 | Method   | Path | Who |
@@ -367,7 +372,7 @@ aegis-protocol/
 |-------------|---------------|
 | 1:1 EUR reserve backing | `AegisVault.sol` + `/banking/reserve-status` |
 | KYC for transfers > 1 000 EUR | `ComplianceEngine.check_transaction()` |
-| ZK proof for large transfers | Noir circuits + `/compliance/proof/generate` |
+| ZK proof for every pool transaction | `noir_circuits/spend`, proven client-side, verified on-chain |
 | Account freeze / unfreeze | `AegisEUR.freeze()` (REGULATOR_ROLE) |
 | Transaction velocity limits | In-memory velocity tracker (5 tx/min) |
 | ESMA reporting | `/api/v1/reporting/compliance-report` |

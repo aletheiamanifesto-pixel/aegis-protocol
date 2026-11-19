@@ -62,9 +62,9 @@ def startup():
 from routers.auth import router as auth_router
 from routers.banking import router as banking_router
 from routers.bridge import router as bridge_router
+from routers.pool import router as pool_router
 from routers.compliance import router as compliance_router
 from routers.oracle import router as oracle_router
-from routers.proof import router as proof_router
 from routers.reporting import router as reporting_router
 from routers.settlement import router as settlement_router
 from routers.transactions import router as transactions_router
@@ -76,13 +76,13 @@ app.include_router(auth_router)
 app.include_router(wallet_router)
 app.include_router(transactions_router)
 app.include_router(compliance_router)
-app.include_router(proof_router)
 app.include_router(viewing_keys_v2_router)
 app.include_router(banking_router)
 app.include_router(settlement_router)
 app.include_router(oracle_router)
 app.include_router(reporting_router)
 app.include_router(bridge_router)
+app.include_router(pool_router)
 app.include_router(proofmint_router)
 
 
