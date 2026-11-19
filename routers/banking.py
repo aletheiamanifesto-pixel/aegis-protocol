@@ -1,141 +1,122 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-routers/banking.py - Banking endpoints for AEGIS Protocol.
+routers/banking.py - EUR operations. State in the database, amounts in Decimal, idempotent with
+the `Idempotency-Key` header. Deposits complete ONLY on the bank's confirmation.
 """
 
+import hashlib
+import hmac
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+import banking_operations as bo
 from routers.auth import _get_current_user
-from security import get_db as _sec_get_db, require_owner, require_second_factor
-from schemas import (
-    DepositRequest,
-    RecurringPaymentRequest,
-    SchedulePaymentRequest,
-    WithdrawRequest,
-)
-
-try:
-    from db import get_db
-    _db_available = True
-except ImportError:
-    _db_available = False
-
-    def get_db():
-        yield None
-
-try:
-    from banking_operations import (
-        deposit_eur,
-        withdraw_eur,
-        get_account_statement,
-        schedule_payment,
-        recurring_payment,
-        get_reserve_status,
-        BankingError,
-    )
-    _bo_available = True
-except ImportError:
-    _bo_available = False
+from schemas import DepositRequest, Money, RecurringPaymentRequest, SchedulePaymentRequest, WithdrawRequest
+from security import get_db, require_owner, require_roles, require_second_factor
 
 router = APIRouter(tags=["banking"])
 
 
-@router.post("/banking/deposit")
-def banking_deposit(req: DepositRequest, current_user: Dict = Depends(_get_current_user),
-                    db=Depends(_sec_get_db)):
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
+def _bad(e: Exception):
+    raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/banking/deposit", status_code=201)
+def banking_deposit(req: DepositRequest, current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db),
+                    idempotency_key: Optional[str] = Header(default=None, max_length=128)):
+    """Create a deposit instruction (awaiting_funds): no token without the bank's confirmation."""
     require_owner(db, current_user, req.wallet_address)
     try:
-        result = deposit_eur(current_user["user_id"], req.amount, req.wallet_address)
-        return result
-    except BankingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return bo.create_deposit(db, int(current_user["user_id"]), req.amount, req.wallet_address, idempotency_key)
+    except bo.BankingError as e:
+        _bad(e)
 
 
-@router.post("/banking/withdraw")
-def banking_withdraw(req: WithdrawRequest, current_user: Dict = Depends(_get_current_user),
-                     db=Depends(_sec_get_db)):
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
+@router.post("/banking/withdraw", status_code=201)
+def banking_withdraw(req: WithdrawRequest, current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db),
+                     idempotency_key: Optional[str] = Header(default=None, max_length=128)):
     require_owner(db, current_user, req.wallet_address)
     require_second_factor(db, current_user, req.totp_code, mandatory=True)
     try:
-        result = withdraw_eur(current_user["user_id"], req.amount, req.wallet_address, req.iban)
-        return result
-    except BankingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return bo.create_withdrawal(db, int(current_user["user_id"]), req.amount, req.wallet_address, req.iban,
+                                    idempotency_key)
+    except bo.BankingError as e:
+        _bad(e)
+
+
+class DepositConfirmation(BaseModel):
+    reference: str
+    amount: Money
+    bank_tx_id: str
+
+
+@router.post("/banking/deposits/confirm")
+def banking_confirm_deposit(req: DepositConfirmation, _officer: Dict = Depends(require_roles("compliance", "admin")),
+                            db: Session = Depends(get_db)):
+    """Manual confirmation (compliance) of a credit seen on the bank account."""
+    try:
+        return bo.confirm_deposit(db, req.reference, req.amount, req.bank_tx_id)
+    except bo.BankingError as e:
+        _bad(e)
+
+
+@router.post("/banking/webhook/deposit")
+async def banking_deposit_webhook(request: Request, db: Session = Depends(get_db)):
+    """Credit notification from the bank/BaaS, signed HMAC-SHA256 (X-Bank-Signature, BANK_WEBHOOK_SECRET)."""
+    secret = os.getenv("BANK_WEBHOOK_SECRET", "")
+    if len(secret) < 32:
+        raise HTTPException(status_code=503, detail="Bank webhook not configured")
+    body = await request.body()
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, request.headers.get("X-Bank-Signature", "")):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    try:
+        req = DepositConfirmation.model_validate_json(body)
+        return bo.confirm_deposit(db, req.reference, req.amount, req.bank_tx_id)
+    except ValueError as e:
+        _bad(e)
 
 
 @router.get("/banking/statement")
-def banking_statement(
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-    current_user: Dict = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
-
+def banking_statement(from_date: Optional[str] = None, to_date: Optional[str] = None,
+                      current_user: Dict = Depends(_get_current_user), db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    fd = datetime.fromisoformat(from_date) if from_date else now - timedelta(days=30)
-    td = datetime.fromisoformat(to_date) if to_date else now
-
     try:
-        result = get_account_statement(current_user["user_id"], fd, td)
-        return result
-    except BankingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        fd = datetime.fromisoformat(from_date) if from_date else now - timedelta(days=30)
+        td = datetime.fromisoformat(to_date) if to_date else now
+        return bo.get_account_statement(db, int(current_user["user_id"]), fd, td)
+    except (ValueError, bo.BankingError) as e:
+        _bad(e)
 
 
-@router.post("/banking/schedule-payment")
-def banking_schedule_payment(
-    req: SchedulePaymentRequest,
-    current_user: Dict = Depends(_get_current_user),
-    db=Depends(_sec_get_db),
-):
+@router.post("/banking/schedule-payment", status_code=201)
+def banking_schedule_payment(req: SchedulePaymentRequest, current_user: Dict = Depends(_get_current_user),
+                             db: Session = Depends(get_db)):
     require_owner(db, current_user, req.from_address)
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
     try:
-        result = schedule_payment(
-            current_user["user_id"], req.from_address, req.to_address, req.amount, req.scheduled_at
-        )
-        return result
-    except BankingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return bo.schedule_payment(db, int(current_user["user_id"]), req.from_address, req.to_address, req.amount,
+                                   req.scheduled_at)
+    except bo.BankingError as e:
+        _bad(e)
 
 
-@router.post("/banking/recurring-payment")
-def banking_recurring_payment(
-    req: RecurringPaymentRequest,
-    current_user: Dict = Depends(_get_current_user),
-    db=Depends(_sec_get_db),
-):
+@router.post("/banking/recurring-payment", status_code=201)
+def banking_recurring_payment(req: RecurringPaymentRequest, current_user: Dict = Depends(_get_current_user),
+                              db: Session = Depends(get_db)):
     require_owner(db, current_user, req.from_address)
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
     try:
-        result = recurring_payment(
-            current_user["user_id"],
-            req.from_address,
-            req.to_address,
-            req.amount,
-            req.frequency,
-            req.start_date,
-        )
-        return result
-    except BankingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return bo.recurring_payment(db, int(current_user["user_id"]), req.from_address, req.to_address, req.amount,
+                                    req.frequency, req.start_date)
+    except bo.BankingError as e:
+        _bad(e)
 
 
 @router.get("/banking/reserve-status")
-def banking_reserve_status():
-    if not _bo_available:
-        raise HTTPException(status_code=503, detail="Banking operations not available")
-    return get_reserve_status()
+def banking_reserve_status(db: Session = Depends(get_db)):
+    return bo.get_reserve_status(db)

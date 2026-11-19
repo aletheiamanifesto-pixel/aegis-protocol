@@ -42,6 +42,17 @@ app.add_middleware(
 )
 
 
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from aegis_env import InsecureConfigError  # noqa: E402
+
+
+@app.exception_handler(InsecureConfigError)
+def _unavailable(_request, exc: InsecureConfigError):
+    """A required service (chain, oracle, keys) is unavailable and simulation is off: 503, not fake data."""
+    return JSONResponse(status_code=503, content={"detail": f"Service unavailable: {exc}"})
+
+
 @app.on_event("startup")
 def startup():
     # The schema is managed by migrations (alembic upgrade head). Only in local
@@ -49,10 +60,8 @@ def startup():
     from aegis_env import mocks_allowed
 
     if _db_available and mocks_allowed():
-        try:
-            init_db()
-        except Exception:
-            pass
+        # A broken database must stop startup, not leave the app running "half-way".
+        init_db()
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +101,7 @@ app.include_router(proofmint_router)
 
 @app.get("/health")
 def health():
-    from routers.banking import _bo_available
+    _bo_available = True  # banking_operations is a hard dependency (DB-backed)
     from routers.bridge import _bridge_available
     from routers.compliance import _ce_available
     from routers.oracle import _oracle_available

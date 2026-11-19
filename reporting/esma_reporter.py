@@ -12,8 +12,11 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from banking_operations import get_reserve_ratio
@@ -45,7 +48,7 @@ class ComplianceReport:
     generated_at: str
     total_transactions: int
     total_volume_eur: float
-    reserve_ratio: float
+    reserve_ratio: Optional[float]  # None = source unavailable (never a made-up value)
     zk_proofs_generated: int
     velocity_limit_breaches: int
     compliance_rejections: Dict[str, int]
@@ -129,12 +132,14 @@ class ESMAReporter:
         self, period_start: datetime, period_end: datetime
     ) -> Dict[str, Any]:
         """Collect statistics from available modules."""
-        reserve_ratio = 1.0
-        try:
-            if get_reserve_ratio is not None:
+        # A regulatory report must not contain "1.0" made up when the source fails:
+        # if the database is unreachable the field is None and the error is logged.
+        reserve_ratio = None
+        if get_reserve_ratio is not None:
+            try:
                 reserve_ratio = get_reserve_ratio()
-        except Exception:  # noqa: BLE001
-            pass
+            except Exception as exc:  # noqa: BLE001 - source unavailable, reported explicitly
+                logger.error("ESMAReporter: reserve ratio unavailable: %s", exc)
 
         total_transactions = 0
         total_volume_eur = 0.0
@@ -143,12 +148,9 @@ class ESMAReporter:
         compliance_rejections: Dict[str, int] = {}
 
         if self._bundler is not None:
-            try:
-                stats = self._bundler.get_stats()
-                total_transactions = stats.get("total_transactions", 0)
-                total_volume_eur = stats.get("total_volume_eur", 0.0)
-            except Exception:  # noqa: BLE001
-                pass
+            stats = self._bundler.get_stats()
+            total_transactions = stats.get("total_transactions", 0)
+            total_volume_eur = stats.get("total_volume_eur", 0.0)
 
         return {
             "total_transactions": total_transactions,

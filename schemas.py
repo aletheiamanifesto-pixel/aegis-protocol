@@ -5,9 +5,13 @@ schemas.py - Pydantic request/response models for AEGIS Protocol API.
 """
 
 from datetime import datetime
-from typing import Optional
+from decimal import Decimal
+from typing import Annotated, Optional
 
 from pydantic import BaseModel, Field
+
+# Money: Decimal with at most 2 decimal places (send it as a string "12.34" for exactness).
+Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 
 
 class RegisterRequest(BaseModel):
@@ -60,12 +64,12 @@ class ViewingKeyRedeemRequest(BaseModel):
 
 
 class DepositRequest(BaseModel):
-    amount: float
+    amount: Money
     wallet_address: str
 
 
 class WithdrawRequest(BaseModel):
-    amount: float
+    amount: Money
     wallet_address: str
     iban: str
     totp_code: str  # withdrawals always require the second factor
@@ -74,14 +78,14 @@ class WithdrawRequest(BaseModel):
 class SchedulePaymentRequest(BaseModel):
     from_address: str
     to_address: str
-    amount: float
+    amount: Money
     scheduled_at: datetime
 
 
 class RecurringPaymentRequest(BaseModel):
     from_address: str
     to_address: str
-    amount: float
+    amount: Money
     frequency: str
     start_date: Optional[datetime] = None
 

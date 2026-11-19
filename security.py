@@ -27,7 +27,12 @@ ALGORITHM = "HS256"
 ROLES = {"user", "compliance", "authority", "admin"}
 AUTHORITY_TYPES = {"uif", "guardia_finanza", "tax_authority", "judicial_authority", "esma", "aml_authority"}
 
+# Lockout per (username, IP): an attacker cannot lock out the real user from their own IP.
+# Wider thresholds per IP (password spraying) and per username across all IPs (distributed attack).
+# Behind a proxy start uvicorn with --proxy-headers and FORWARDED_ALLOW_IPS, otherwise everyone has the proxy's IP.
 LOGIN_MAX_FAILURES = 5
+LOGIN_MAX_FAILURES_PER_IP = 20
+LOGIN_MAX_FAILURES_PER_USER_GLOBAL = 50
 LOGIN_WINDOW = timedelta(minutes=15)
 
 try:
@@ -135,9 +140,10 @@ def check_login_allowed(db, username: str, ip: Optional[str]) -> None:
     q = db.query(db_models.LoginAttempt).filter(
         db_models.LoginAttempt.success.is_(False), db_models.LoginAttempt.created_at >= since
     )
-    by_user = q.filter(db_models.LoginAttempt.username == username).count()
+    by_pair = q.filter(db_models.LoginAttempt.username == username, db_models.LoginAttempt.ip_address == ip).count()
     by_ip = q.filter(db_models.LoginAttempt.ip_address == ip).count() if ip else 0
-    if by_user >= LOGIN_MAX_FAILURES or by_ip >= LOGIN_MAX_FAILURES * 4:
+    by_user = q.filter(db_models.LoginAttempt.username == username).count()
+    if by_pair >= LOGIN_MAX_FAILURES or by_ip >= LOGIN_MAX_FAILURES_PER_IP or by_user >= LOGIN_MAX_FAILURES_PER_USER_GLOBAL:
         raise HTTPException(status_code=429, detail="Too many failed attempts: try again in 15 minutes")
 
 
@@ -146,9 +152,11 @@ def record_login(db, username: str, ip: Optional[str], success: bool) -> None:
         return
     db.add(db_models.LoginAttempt(username=username, ip_address=ip, success=success))
     if success:
-        # a successful login clears the failures counted for this user
+        # a successful login clears only the failures from THIS IP (not those of an attacker elsewhere)
         db.query(db_models.LoginAttempt).filter(
-            db_models.LoginAttempt.username == username, db_models.LoginAttempt.success.is_(False)
+            db_models.LoginAttempt.username == username,
+            db_models.LoginAttempt.ip_address == ip,
+            db_models.LoginAttempt.success.is_(False),
         ).delete(synchronize_session=False)
     db.commit()
 

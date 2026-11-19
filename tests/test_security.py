@@ -182,6 +182,21 @@ def test_login_lockout_after_repeated_failures(client):
     assert r.status_code == 429
 
 
+def test_attacker_cannot_lock_out_the_real_user_from_another_ip(client):
+    """5 failures from the attacker's IP do not block the legitimate user who comes from another IP."""
+    from fastapi.testclient import TestClient
+
+    from main_app import app
+
+    _register_and_login(client, "_victim")
+    attacker = TestClient(app, client=("203.0.113.66", 5000))
+    victim = TestClient(app, client=("198.51.100.7", 5000))
+    for _ in range(5):
+        attacker.post("/auth/login", json={"username": "testuser_victim", "password": "wrong"})
+    assert attacker.post("/auth/login", json={"username": "testuser_victim", "password": "SecurePass123!"}).status_code == 429
+    assert victim.post("/auth/login", json={"username": "testuser_victim", "password": "SecurePass123!"}).status_code == 200
+
+
 def test_logout_revokes_tokens(client):
     h = _register_and_login(client, "_logout")
     assert client.get("/auth/me", headers=h).status_code == 200

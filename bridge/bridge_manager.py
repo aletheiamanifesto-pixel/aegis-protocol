@@ -185,7 +185,9 @@ class BridgeManager:
             except BridgeError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                logger.warning("BridgeManager: compliance check error (ignored): %s", exc)
+                # Fail closed: if the compliance check cannot run, the transfer does not go out.
+                logger.error("BridgeManager: compliance check error: %s", exc)
+                raise BridgeError("Compliance check unavailable: transfer blocked") from exc
 
     def _simulate_bridge(self, request_id: str, request: BridgeRequest) -> BridgeResult:
         """Return a deterministic simulated bridge result (dev mode only)."""

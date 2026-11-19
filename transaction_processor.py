@@ -100,11 +100,15 @@ class TransactionProcessor:
             from web3 import Web3
             w3 = self._web3()
             if not w3.is_connected():
-                return 0.0
+                raise RuntimeError("Node not reachable")
             contract = self._eurc_contract(w3)
             raw = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
             return raw / (10 ** EURC_DECIMALS)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # "0 €" when the node is down would be a false balance: only in development.
+            from aegis_env import require_mocks
+
+            require_mocks(f"balance read ({type(exc).__name__})")
             return 0.0
 
     # ------------------------------------------------------------------

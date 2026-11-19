@@ -79,10 +79,11 @@ class ChainlinkPriceFeed:
             self._cache_updated_at = time.monotonic()
             return data
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "ChainlinkPriceFeed: failed to fetch price — falling back to default. Error: %s",
-                exc,
-            )
+            # A made-up price is worse than no price: only in development.
+            from aegis_env import require_mocks
+
+            logger.error("ChainlinkPriceFeed: failed to fetch price: %s", exc)
+            require_mocks("EUR/USD price (oracle unreachable)")
             return self._dev_price()
 
     def invalidate_cache(self) -> None:
