@@ -310,10 +310,10 @@ aegis-protocol/
 ├── crypto_primitives.py         # Pedersen, MiMC, Merkle, viewing keys
 ├── wallet_service.py            # HD wallet creation, import, QR codes
 ├── banking_operations.py        # Deposit, withdraw, statements, payments
-├── viewing_keys_service.py      # Selective disclosure (Zcash-style)
 ├── noir_bridge.py               # Python → Noir proof system bridge
 ├── db.py / db_models.py         # SQLAlchemy ORM (PostgreSQL)
-├── models.py                    # Domain models (ScopeType, etc.)
+├── security.py                  # Auth: roles, address ownership, login lockout
+├── migrations/                  # Alembic migrations (alembic upgrade head)
 ├── proofmint/                   # DPP SaaS module (router, models, AI, IPFS, GS1)
 ├── bundler/                     # Transaction bundler + Merkle tree
 ├── bridge/                      # Cross-chain bridge manager

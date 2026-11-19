@@ -88,7 +88,6 @@ node_modules/
 deployed_addresses.json
 
 # Alembic
-alembic.ini
 
 # Logs
 *.log

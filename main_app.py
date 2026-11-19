@@ -44,7 +44,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup():
-    if _db_available:
+    # The schema is managed by migrations (alembic upgrade head). Only in local
+    # development (AEGIS_ALLOW_MOCKS=1) are tables created automatically.
+    from aegis_env import mocks_allowed
+
+    if _db_available and mocks_allowed():
         try:
             init_db()
         except Exception:
