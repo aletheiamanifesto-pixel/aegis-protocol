@@ -121,7 +121,10 @@ class TransactionProcessor:
         Return sender (recovered from the signature), recipient, amount in token units and nonce.
         """
         from eth_account import Account
-        from eth_account._utils.typed_transactions import TypedTransaction
+        try:  # eth-account >= 0.13
+            from eth_account.typed_transactions import TypedTransaction
+        except ImportError:  # older eth-account
+            from eth_account._utils.typed_transactions import TypedTransaction
 
         from hexbytes import HexBytes
 

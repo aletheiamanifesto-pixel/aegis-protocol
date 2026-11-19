@@ -170,7 +170,7 @@ class OnChainSettler:
         )
 
         signed = account.sign_transaction(tx)
-        tx_hash_bytes = w3.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
         tx_hash = tx_hash_bytes.hex()
         if not tx_hash.startswith("0x"):
             tx_hash = "0x" + tx_hash

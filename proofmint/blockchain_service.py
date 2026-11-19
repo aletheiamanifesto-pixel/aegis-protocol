@@ -91,7 +91,7 @@ def create_passport_onchain(product_id: str, dpp_hash: str, ipfs_cid: str) -> st
             }
         )
         signed = w3.eth.account.sign_transaction(tx, PROOFMINT_PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         return tx_hash.hex()
     except Exception:
         logger.exception("ProofMint createPassport on-chain call failed, using mock tx hash")
@@ -144,7 +144,7 @@ def update_passport_onchain(passport_id: int, new_hash: str, new_ipfs_cid: str) 
             }
         )
         signed = w3.eth.account.sign_transaction(tx, PROOFMINT_PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         return tx_hash.hex()
     except Exception:
         logger.exception("ProofMint updatePassport on-chain call failed, using mock tx hash")

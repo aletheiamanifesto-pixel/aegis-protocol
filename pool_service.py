@@ -217,7 +217,7 @@ def relay(proof: Dict[str, Any], ext: Dict[str, Any]) -> RelayResult:
         "chainId": int(os.getenv("CHAIN_ID", "80002")),
     })
     signed = w3.eth.account.sign_transaction(tx, _key("POOL_RELAYER_KEY").to_hex())
-    return RelayResult(w3.eth.send_raw_transaction(signed.rawTransaction).hex(), simulated=False)
+    return RelayResult(w3.eth.send_raw_transaction(signed.raw_transaction).hex(), simulated=False)
 
 
 def is_configured() -> bool:
