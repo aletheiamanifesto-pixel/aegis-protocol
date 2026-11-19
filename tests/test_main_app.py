@@ -258,31 +258,6 @@ class TestComplianceProfile:
 
 
 # ---------------------------------------------------------------------------
-# 8. POST /compliance/proof/generate
-# ---------------------------------------------------------------------------
-
-class TestProofGenerate:
-    def test_generate_proof(self, client):
-        headers = _register_and_login(client, "_proof")
-        r = client.post("/compliance/proof/generate", json={
-            "sender": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-            "amount": 500.0,
-            "purpose": "transfer",
-        }, headers=headers)
-        assert r.status_code in (200, 503)
-        if r.status_code == 200:
-            body = r.json()
-            assert "proof_hash" in body or "proof" in body
-
-    def test_generate_proof_unauthenticated(self, client):
-        r = client.post("/compliance/proof/generate", json={
-            "sender": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-            "amount": 500.0,
-        })
-        assert r.status_code == 401
-
-
-# ---------------------------------------------------------------------------
 # 9. POST /viewing-keys/create
 # ---------------------------------------------------------------------------
 

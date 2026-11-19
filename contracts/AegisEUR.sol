@@ -3,14 +3,16 @@ pragma solidity ^0.8.20;
 
 /**
  * @title AegisEUR
- * @notice ERC-20 token representing 1:1 backed Euro in the AEGIS Protocol.
+ * @notice ERC-20 token for 1:1 euro, issued by AegisVault ("own e-money token" strategy:
+ *         requires a licensed issuer (EMI/bank) under MiCA).
  *
- * Features:
- * - Mint/burn controlled by authorized vault
- * - Transfer with attached ZK proof
- * - Pedersen commitment of balance for on-chain privacy
- * - MiCA-compliant freeze/unfreeze (REGULATOR_ROLE)
- * - Role-based access: MINTER_ROLE, REGULATOR_ROLE, VAULT_ROLE
+ * IMPORTANT: balances and transfers of this token are PUBLIC like any ERC-20.
+ * Confidentiality is provided by ShieldedPool, which accepts any ERC-20 (EURC, EURe or this
+ * token). `transferWithProof` and `updateBalanceCommitment` are LEGACY: they give no
+ * privacy and are kept only for compatibility; do not use them in new integrations.
+ *
+ * - Mint/burn only by the vault (multisig with independent reserve attestation)
+ * - MiCA freeze/unfreeze (REGULATOR_ROLE)
  */
 
 interface INoirVerifier {

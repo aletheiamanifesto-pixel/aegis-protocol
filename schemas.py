@@ -46,18 +46,6 @@ class KYCRequest(BaseModel):
     id_document_hash: str
 
 
-class ProofGenerateRequest(BaseModel):
-    sender: str
-    amount: float
-    purpose: str = "transfer"
-
-
-class ProofVerifyRequest(BaseModel):
-    proof_hash: str
-    sender: str
-    amount: float
-
-
 class ViewingKeyCreateRequest(BaseModel):
     owner_address: str
     scope: str = "balance_only"

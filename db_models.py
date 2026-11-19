@@ -85,6 +85,7 @@ class ComplianceProfile(Base):
     kyc_status = Column(String(20), default="none", nullable=False)
     kyc_tier = Column(Integer, default=0, nullable=False)
     kyc_provider_ref = Column(String(255), nullable=True)
+    kyc_country = Column(String(2), nullable=True)  # ISO 3166-1 alpha-2, from the verification
     aml_screened = Column(Boolean, default=False, nullable=False)
     daily_limit = Column(Float, default=10000.0, nullable=False)
     single_tx_limit = Column(Float, default=5000.0, nullable=False)
@@ -227,3 +228,35 @@ class PersistentState(Base):
     key = Column(String(128), nullable=False)
     value = Column(Text, nullable=False)  # Fernet token of the JSON record
     updated_at = Column(Float, nullable=False)
+
+
+class PoolPseudonym(Base):
+    """Operator register: pseudonym (owner_pubkey of the ZK notes) → KYC'd customer.
+
+    It is the link that makes graduated disclosure possible (L4 identity) and lets the
+    operator know whose transactions it relays, without decrypting anything.
+    """
+
+    __tablename__ = "pool_pseudonyms"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    pseudonym = Column(String(66), unique=True, nullable=False, index=True)
+    tier = Column(Integer, nullable=False)
+    jurisdiction = Column(Integer, nullable=False)
+    credential_expiry = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PoolRelay(Base):
+    """Transactions relayed to the ShieldedPool on behalf of customers (AML record keeping)."""
+
+    __tablename__ = "pool_relays"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    tx_hash = Column(String(66), unique=True, nullable=False, index=True)
+    public_in = Column(Integer, nullable=False, default=0)
+    public_out = Column(Integer, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="submitted")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
