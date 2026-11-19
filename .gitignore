@@ -94,7 +94,6 @@ deployed_addresses.json
 logs/
 
 # Docker
-.dockerignore
 
 # Secrets
 *.pem

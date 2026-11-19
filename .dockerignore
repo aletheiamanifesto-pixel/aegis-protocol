@@ -1,0 +1,11 @@
+.git
+.env
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+artifacts
+cache
+typechain-types
+frontend/.next
+noir_circuits/target
+*.db
