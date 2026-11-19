@@ -16,7 +16,8 @@ export async function loadCircuit(name) {
   return cache[name];
 }
 
-export const ISSUER_KEY = '0x' + '42'.repeat(32);
+export const ISSUER_KEY = 0x42424242424242424242n; // Grumpkin scalar of the issuer (tests)
+export const MAX_TX = 16;
 export const NOW = 1_800_000_000n;
 export const IT = 0; // bit 0 of the jurisdiction mask = Italy
 export const ALLOWED = (1n << 0n) | (1n << 1n); // IT + DE, for example
@@ -42,6 +43,7 @@ export async function buildSpend(aegis, tree, w, opts = {}) {
   }
   const cred = w.credential;
   const issuer = Aegis.issuerPublicKey(opts.issuerKey ?? ISSUER_KEY);
+  const point2 = (p) => ({ x: hex(p.x), y: hex(p.y) });
   const inputs = {
     root: hex(await tree.root()),
     nullifiers: [hex(ins[0].nf), hex(opts.duplicateNullifier ? ins[0].nf : ins[1].nf)],
@@ -53,8 +55,8 @@ export async function buildSpend(aegis, tree, w, opts = {}) {
     now: (opts.now ?? NOW).toString(),
     allowed_jurisdictions: (opts.allowed ?? ALLOWED).toString(),
     tier_limits: TIER_LIMITS.map(String),
-    issuer_pk_x: toNoirBytes(issuer.x),
-    issuer_pk_y: toNoirBytes(issuer.y),
+    max_tx_per_epoch: String(opts.maxTx ?? MAX_TX),
+    issuer_key: point2(issuer),
     tax_key: point(w.taxKey),
     aml_key: point(w.amlKey),
     spending_secret: hex(w.secret),
@@ -69,8 +71,12 @@ export async function buildSpend(aegis, tree, w, opts = {}) {
       tier: cred.tier.toString(),
       jurisdiction: cred.jurisdiction.toString(),
       expiry: cred.expiry.toString(),
-      signature: toNoirBytes(cred.signature),
+      person_tag: hex(cred.personTag),
+      sig_r: point2(cred.sig.R),
+      sig_s_lo: hex(cred.sig.sLo),
+      sig_s_hi: hex(cred.sig.sHi),
     },
+    rate_slot: String(w.rateSlot ?? 0),
     tax_randomness: hex(randomField()),
     aml_randomness: hex(randomField()),
   };

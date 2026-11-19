@@ -55,7 +55,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Solidity tests (Hardhat)
+      - name: Committed verifiers match the circuits
+        run: |
+          npm run build:circuits
+          git diff --exit-code contracts/verifiers/
+
+      - name: Solidity tests (Hardhat, includes on-chain verification of real proofs)
         run: npx hardhat test
 
       - name: Noir circuit tests (includes a real UltraHonk proof)

@@ -32,11 +32,12 @@ describe("ShieldedPool", function () {
   this.timeout(600_000);
 
   let sdk, helpers, aegis, tax, aml;
+  let slotCounter = 0;
   let owner, alice, relayer, other;
   let token, verifier, pool;
   const TIER_LIMITS = [0n, 100_000_000n, 1_500_000_000n, 10n ** 14n]; // 6 decimals: 100 €, 1,500 €, ...
   const ALLOWED = 0b11n;
-  const ISSUER_KEY = "0x" + "42".repeat(32);
+  const ISSUER_KEY = 0x42424242424242424242n; // Grumpkin scalar of the KYC issuer (tests)
 
   async function deploy(opts = {}) {
     token = await (await ethers.getContractFactory("MockERC20")).deploy();
@@ -53,17 +54,18 @@ describe("ShieldedPool", function () {
       opts.maxDeposit ?? 1_000_000_000n,
     );
     const issuer = sdk.Aegis.issuerPublicKey(ISSUER_KEY);
-    await pool.setIssuer(ethers.hexlify(issuer.x), ethers.hexlify(issuer.y), true);
+    await pool.setIssuer(issuer.x, issuer.y, true);
     await token.mint(alice.address, 5_000_000_000n);
     await token.connect(alice).approve(await pool.getAddress(), ethers.MaxUint256);
   }
 
   // Builds the calldata with values that are consistent with a real execution of the circuit
   // (the mock verifier only skips the cryptographic check).
-  async function realTx({ publicIn = 0n, publicOut = 0n, inputs = [], outputs, secret, tree, ext }) {
+  async function realTx({ publicIn = 0n, publicOut = 0n, inputs = [], outputs, secret, tree, ext, personTag = 1234n, rateSlot }) {
     const owner_ = await aegis.ownerPubkey(secret);
     const now = BigInt(await time.latest());
-    const credential = await aegis.issueCredential(ISSUER_KEY, owner_, { tier: 2, jurisdiction: 0, expiry: now + 86_400n });
+    const credential = await aegis.issueCredential(ISSUER_KEY, owner_, { tier: 2, jurisdiction: 0, expiry: now + 86_400n, personTag });
+    rateSlot = rateSlot ?? slotCounter++;
     const extData = {
       recipient: ext?.recipient ?? ethers.ZeroAddress,
       relayer: ext?.relayer ?? ethers.ZeroAddress,
@@ -74,11 +76,11 @@ describe("ShieldedPool", function () {
     const extHash = await pool.extDataHash(extData);
     const { inputs: w } = await helpers.buildSpend(aegis, tree, {
       secret, asset: BigInt(await token.getAddress()), credential, taxKey: tax.pub, amlKey: aml.pub,
-      inputs, outputs, publicIn, publicOut, extDataHash: extHash,
+      inputs, outputs, publicIn, publicOut, extDataHash: extHash, rateSlot,
     }, { now, allowed: ALLOWED });
     w.tier_limits = TIER_LIMITS.map(String);
     const { returnValue } = await helpers.execute("spend", w);
-    const [taxEph, taxCt, amlEph, amlCt] = returnValue;
+    const [taxEph, taxCt, amlEph, amlCt, rateNullifier] = returnValue;
     const issuer = sdk.Aegis.issuerPublicKey(ISSUER_KEY);
     const proof = {
       proof: "0x",
@@ -87,9 +89,10 @@ describe("ShieldedPool", function () {
       outCommitments: w.out_commitments,
       publicIn, publicOut,
       timestamp: now,
-      issuer: { x: ethers.hexlify(issuer.x), y: ethers.hexlify(issuer.y) },
+      issuer: { x: issuer.x, y: issuer.y },
       taxEph: { x: taxEph.x, y: taxEph.y }, taxCt,
       amlEph: { x: amlEph.x, y: amlEph.y }, amlCt,
+      rateNullifier,
     };
     return { proof, extData, witness: w, returnValue };
   }
@@ -97,11 +100,11 @@ describe("ShieldedPool", function () {
   // Flattening of the circuit's public inputs (same order as the Noir ABI), independent of the contract.
   function flattenPublic(w, ret) {
     const f = (x) => ethers.toBeHex(BigInt(x), 32);
-    const [te, tc, ae, ac] = ret;
+    const [te, tc, ae, ac, rn] = ret;
     return [
       w.root, ...w.nullifiers, ...w.out_commitments, w.public_in, w.public_out, w.asset, w.ext_data_hash,
-      w.now, w.allowed_jurisdictions, ...w.tier_limits, ...w.issuer_pk_x, ...w.issuer_pk_y,
-      w.tax_key.x, w.tax_key.y, w.aml_key.x, w.aml_key.y, te.x, te.y, ...tc, ae.x, ae.y, ...ac,
+      w.now, w.allowed_jurisdictions, ...w.tier_limits, w.max_tx_per_epoch, w.issuer_key.x, w.issuer_key.y,
+      w.tax_key.x, w.tax_key.y, w.aml_key.x, w.aml_key.y, te.x, te.y, ...tc, ae.x, ae.y, ...ac, rn,
     ].map(f);
   }
 
@@ -178,7 +181,7 @@ describe("ShieldedPool", function () {
 
     await expect(pool.connect(alice).transact({ ...tx.proof, root: 123n }, tx.extData)).to.be.revertedWith("unknown root");
 
-    const bad = { x: ethers.hexlify(ethers.randomBytes(32)), y: ethers.hexlify(ethers.randomBytes(32)) };
+    const bad = { x: 1n, y: 2n };
     await expect(pool.connect(alice).transact({ ...tx.proof, issuer: bad }, tx.extData)).to.be.revertedWith("issuer not allowed");
 
     await time.increase(3601);
@@ -201,6 +204,34 @@ describe("ShieldedPool", function () {
     await expect(pool.connect(alice).transact(b.proof, b.extData)).to.be.revertedWith("TVL cap reached");
   });
 
+  it("daily limit per PERSON: a second pseudonym of the same person cannot reuse a slot", async function () {
+    const tree = await sdk.MerkleTree.create(aegis);
+    const mk = async (personTag, slot) => {
+      const secret = sdk.randomField();
+      const me = await aegis.ownerPubkey(secret);
+      return realTx({ secret, tree, publicIn: 1_000_000n, personTag, rateSlot: slot,
+        outputs: [{ amount: 1_000_000n, owner: me, blinding: sdk.randomField() }, { amount: 0n, owner: me, blinding: sdk.randomField() }] });
+    };
+    const a = await mk(777n, 0);
+    await pool.connect(alice).transact(a.proof, a.extData);
+    const b = await mk(777n, 0); // other pseudonym, same person, same slot today
+    await expect(pool.connect(alice).transact(b.proof, b.extData)).to.be.revertedWith("daily transaction limit reached");
+    const c = await mk(888n, 0); // other person: OK
+    await pool.connect(alice).transact(c.proof, c.extData);
+  });
+
+  it("issuers: only keys on the curve, removal = immediate revocation", async function () {
+    await expect(pool.setIssuer(1, 2, true)).to.be.revertedWith("issuer key not on curve");
+    const secret = sdk.randomField();
+    const me = await aegis.ownerPubkey(secret);
+    const tree = await sdk.MerkleTree.create(aegis);
+    const tx = await realTx({ secret, tree, publicIn: 1_000_000n,
+      outputs: [{ amount: 1_000_000n, owner: me, blinding: sdk.randomField() }, { amount: 0n, owner: me, blinding: sdk.randomField() }] });
+    const issuer = sdk.Aegis.issuerPublicKey(ISSUER_KEY);
+    await pool.setIssuer(issuer.x, issuer.y, false);
+    await expect(pool.connect(alice).transact(tx.proof, tx.extData)).to.be.revertedWith("issuer not allowed");
+  });
+
   it("changing ext data (e.g. the recipient) invalidates the public inputs", async function () {
     const secret = sdk.randomField();
     const me = await aegis.ownerPubkey(secret);
@@ -210,6 +241,7 @@ describe("ShieldedPool", function () {
     await pool.connect(alice).transact(tx.proof, tampered); // the mock accepts...
     const pi = await verifier.lastPublicInputs();
     // ...but the ext_data_hash passed to the verifier is no longer the one the proof was made for.
+    expect(pi.length).to.equal(39);
     expect(pi[8]).to.not.equal(ethers.toBeHex(BigInt(tx.witness.ext_data_hash), 32));
   });
 
@@ -218,7 +250,7 @@ describe("ShieldedPool", function () {
     await expect(pool.setAuditorKeys({ x: 1, y: 1 }, { x: aml.pub.x, y: aml.pub.y })).to.be.revertedWith("auditor key not on curve");
     await pool.pause();
     await expect(pool.connect(alice).transact(
-      { proof: "0x", root: 0, nullifiers: [0, 0], outCommitments: [0, 0], publicIn: 0, publicOut: 0, timestamp: 0, issuer: { x: ethers.ZeroHash, y: ethers.ZeroHash }, taxEph: { x: 0, y: 0 }, taxCt: [0, 0, 0, 0], amlEph: { x: 0, y: 0 }, amlCt: [0, 0, 0, 0, 0, 0, 0, 0] },
+      { proof: "0x", root: 0, nullifiers: [0, 0], outCommitments: [0, 0], publicIn: 0, publicOut: 0, timestamp: 0, issuer: { x: 0, y: 0 }, taxEph: { x: 0, y: 0 }, taxCt: [0, 0, 0, 0], amlEph: { x: 0, y: 0 }, amlCt: [0, 0, 0, 0, 0, 0, 0, 0], rateNullifier: 0 },
       { recipient: ethers.ZeroAddress, relayer: ethers.ZeroAddress, fee: 0, encryptedOutput0: "0x", encryptedOutput1: "0x" },
     )).to.be.revertedWithCustomError(pool, "EnforcedPause");
   });

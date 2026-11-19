@@ -5,7 +5,7 @@
 //   2. .env with:
 //        POOL_TOKEN_ADDRESS     EURC/EURe token on the target chain
 //        POOL_OWNER             multisig (Safe) behind a timelock — NEVER an EOA in production
-//        KYC_ISSUER_PUBKEY      uncompressed secp256k1 public key of the issuer (0x04 + 64 bytes)
+//        KYC_ISSUER_X, KYC_ISSUER_Y  Schnorr-Grumpkin public key of the KYC issuer (GET /pool/issuer)
 //        TAX_KEY_X, TAX_KEY_Y   threshold key of the tax-disclosure committee (Grumpkin)
 //        AML_KEY_X, AML_KEY_Y   threshold key of the AML-disclosure committee (Grumpkin)
 //      optional: ALLOWED_JURISDICTIONS (bitmask, default 1 = IT), TIER_LIMITS (4 values, token units),
@@ -25,14 +25,8 @@ async function main() {
   const decimals = 6n;
   const eur = (n) => BigInt(n) * 10n ** decimals;
 
-  let Verifier;
-  try {
-    Verifier = await ethers.getContractFactory("SpendVerifier");
-  } catch {
-    throw new Error("SpendVerifier not found: first run `npm run build:circuits` and recompile");
-  }
-  const verifier = await Verifier.deploy();
-  await verifier.waitForDeployment();
+  const { deployHonkVerifier } = require("./lib/deploy_verifier");
+  const verifier = await deployHonkVerifier(ethers, "SpendVerifier");
   console.log("SpendVerifier:", await verifier.getAddress());
 
   const tierLimits = process.env.TIER_LIMITS
@@ -54,9 +48,7 @@ async function main() {
   await pool.waitForDeployment();
   console.log("ShieldedPool:", await pool.getAddress());
 
-  const pub = ethers.getBytes(need("KYC_ISSUER_PUBKEY"));
-  if (pub.length !== 65 || pub[0] !== 4) throw new Error("KYC_ISSUER_PUBKEY must be uncompressed (0x04...)");
-  await (await pool.setIssuer(ethers.hexlify(pub.slice(1, 33)), ethers.hexlify(pub.slice(33)), true)).wait();
+  await (await pool.setIssuer(BigInt(need("KYC_ISSUER_X")), BigInt(need("KYC_ISSUER_Y")), true)).wait();
   console.log("KYC issuer registered");
 
   // Ownable2Step: the multisig must call acceptOwnership().

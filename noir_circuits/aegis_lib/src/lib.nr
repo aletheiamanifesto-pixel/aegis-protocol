@@ -22,3 +22,8 @@ pub global DOMAIN_NULLIFIER: Field = 3;
 pub global DOMAIN_CREDENTIAL: Field = 4;
 pub global DOMAIN_KEYSTREAM: Field = 5;
 pub global DOMAIN_BALANCE: Field = 6;
+pub global DOMAIN_SCHNORR: Field = 7;
+pub global DOMAIN_RATE: Field = 8;
+
+/// Seconds in an epoch for the rate limit (1 day).
+pub global EPOCH_SECONDS: u64 = 86400;

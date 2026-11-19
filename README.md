@@ -392,8 +392,17 @@ aegis-protocol/
 | `balance_proof` | Balance ≥ threshold for a binding Poseidon2 commitment |
 | `compliance_proof` | Valid KYC credential with tier ≥ min, without revealing identity (scoped nullifier) |
 
-All hashes are Poseidon2 (same sponge as Barretenberg), signatures ECDSA-secp256k1,
-encryption ECDH on Grumpkin. See [docs/DISCLOSURE_GRADUATA.md](docs/DISCLOSURE_GRADUATA.md).
+All hashes are Poseidon2 (same sponge as Barretenberg), KYC credentials are Schnorr
+signatures on Grumpkin, encryption is ECDH on Grumpkin.
+
+Measured (Noir 1.0 + bb.js 5.3, UltraHonk): `spend` = **15,800 gates** (2^14), proof 8 KB,
+39 public inputs, **0.4 s** to prove on a 4-thread server (mobile not measured yet);
+`ShieldedPool.transact` with on-chain verification ≈ **5.4M gas**
+(`test/ShieldedPool.e2e.test.js`). Daily limit per PERSON via rate nullifiers
+(`maxTxPerEpoch`, default 16 tx/day across all of a person's pseudonyms). Credentials last 24 h;
+removing an issuer key with `setIssuer(x, y, false)` revokes all its credentials at once.
+Committee keys: DKG (no dealer) + DLEQ proofs on every partial decryption (`sdk/aegis-core.mjs`).
+The generated verifiers are committed in `contracts/verifiers/` and CI checks they match the circuits. See [docs/DISCLOSURE_GRADUATA.md](docs/DISCLOSURE_GRADUATA.md).
 
 ```bash
 npm run test:circuits      # executes the circuits with valid and malicious witnesses

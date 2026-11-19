@@ -35,6 +35,8 @@ class User(Base):
     totp_secret = Column(Text, nullable=True)
     totp_enabled = Column(Boolean, default=False, nullable=False)
     totp_last_step = Column(Integer, nullable=True)
+    # Pool rate limit: one secret tag PER PERSON (the same on all their pseudonyms).
+    pool_person_tag = Column(String(66), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

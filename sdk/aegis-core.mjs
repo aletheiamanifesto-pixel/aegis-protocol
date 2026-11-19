@@ -213,3 +213,110 @@ export function combinePartials(partials) {
 export function thresholdDecrypt(partials, ct) {
   return decryptWithShared(combinePartials(partials), ct);
 }
+
+// ---------------------------------------------------------------- Schnorr (KYC credentials)
+// Same scheme as aegis_lib::credential::verify_schnorr:
+//   e = Poseidon2(DOMAIN_SCHNORR=7, R.x, R.y, PK.x, PK.y, msg);  s = k + e·sk (mod Q);  check s·G == R + e·PK
+export const DOMAIN_SCHNORR = 7n;
+export const DOMAIN_RATE = 8n;
+export const EPOCH_SECONDS = 86400n;
+
+export const credentialHashV2 = (owner, { tier, jurisdiction, expiry, personTag }) =>
+  poseidon2([DOMAIN.CREDENTIAL, owner, BigInt(tier), BigInt(jurisdiction), BigInt(expiry), BigInt(personTag)]);
+
+export function schnorrSign(secret, msg, k = randomScalar(Q)) {
+  const pub = scalarMul(G, secret);
+  const R = scalarMul(G, k);
+  const e = poseidon2([DOMAIN_SCHNORR, R.x, R.y, pub.x, pub.y, msg]);
+  const s = mod(k + mod(e, Q) * mod(BigInt(secret), Q), Q);
+  return { R, s, sLo: s & ((1n << 128n) - 1n), sHi: s >> 128n };
+}
+
+export function schnorrVerify(pub, msg, { R, s }) {
+  if (!onCurve(pub) || !onCurve(R)) return false;
+  const e = poseidon2([DOMAIN_SCHNORR, R.x, R.y, pub.x, pub.y, msg]);
+  const lhs = scalarMul(G, s);
+  const rhs = pointAdd(R, scalarMul(pub, e));
+  return lhs !== INF && rhs !== INF && lhs.x === rhs.x && lhs.y === rhs.y;
+}
+
+/** Issuer side (e.g. the backend): credential for `owner` with the person's `personTag`. */
+export function issueCredentialV2(issuerSecret, owner, { tier, jurisdiction, expiry, personTag }) {
+  const h = credentialHashV2(owner, { tier, jurisdiction, expiry, personTag });
+  return { tier, jurisdiction, expiry: BigInt(expiry), personTag: BigInt(personTag), sig: schnorrSign(issuerSecret, h), hash: h };
+}
+
+export const rateNullifier = (personTag, now, slot) =>
+  poseidon2([DOMAIN_RATE, BigInt(personTag), BigInt(now) / EPOCH_SECONDS, BigInt(slot)]);
+
+// ---------------------------------------------------------------- DLEQ (Chaum-Pedersen)
+// Proves that log_G(Y) == log_E(D), i.e. that the partial share D = s_i·E was computed with the SAME
+// secret as the published public share Y = s_i·G. A dishonest member cannot send a fake share.
+export function dleqProve(secret, E, Y = scalarMul(G, secret), D = scalarMul(E, secret)) {
+  const w = randomScalar(Q);
+  const A = scalarMul(G, w), B = scalarMul(E, w);
+  const c = mod(poseidon2([9n, Y.x, Y.y, E.x, E.y, D.x, D.y, A.x, A.y, B.x, B.y]), Q);
+  return { c, z: mod(w + c * mod(BigInt(secret), Q), Q) };
+}
+
+export function dleqVerify(Y, E, D, { c, z }) {
+  // A = z·G − c·Y ; B = z·E − c·D
+  const neg = (P) => (P === INF ? INF : { x: P.x, y: mod(-P.y) });
+  const A = pointAdd(scalarMul(G, z), neg(scalarMul(Y, c)));
+  const B = pointAdd(scalarMul(E, z), neg(scalarMul(D, c)));
+  if (A === INF || B === INF) return false;
+  return mod(poseidon2([9n, Y.x, Y.y, E.x, E.y, D.x, D.y, A.x, A.y, B.x, B.y]), Q) === c;
+}
+
+/** Partial share WITH proof: the committee can check it before combining. */
+export function partialDecryptWithProof(share, eph) {
+  const point = scalarMul(eph, share.secret);
+  return { index: share.index, point, proof: dleqProve(share.secret, eph, share.pub, point) };
+}
+
+/** Combine ONLY verified shares (Y_i are the members' public shares). Throws on a fake share. */
+export function thresholdDecryptVerified(partials, publicShares, eph, ct) {
+  for (const p of partials) {
+    const Y = publicShares.get(String(p.index));
+    if (!Y || !dleqVerify(Y, eph, p.point, p.proof)) throw new Error(`invalid partial share from member ${p.index}`);
+  }
+  return thresholdDecrypt(partials, ct);
+}
+
+// ---------------------------------------------------------------- DKG (Pedersen/Feldman)
+// No "dealer": each member chooses their own polynomial, publishes the commitments of the coefficients
+// and sends every other member their share. The committee key is the SUM of the constant terms:
+// nobody ever knows it in full.
+export function dkgDeal(t, n) {
+  const coeffs = Array.from({ length: t }, () => randomScalar(Q));
+  const commitments = coeffs.map((a) => scalarMul(G, a));
+  const shares = new Map();
+  for (let j = 1n; j <= BigInt(n); j++) {
+    let y = 0n;
+    for (let k = coeffs.length - 1; k >= 0; k--) y = mod(y * j + coeffs[k], Q);
+    shares.set(String(j), y);
+  }
+  return { commitments, shares };
+}
+
+/** Feldman check: the share received from a dealer is consistent with their public commitments. */
+export function dkgVerifyShare(j, share, commitments) {
+  let acc = INF, jPow = 1n;
+  for (const C of commitments) { acc = pointAdd(acc, scalarMul(C, jPow)); jPow = mod(jPow * BigInt(j), Q); }
+  const lhs = scalarMul(G, share);
+  return acc !== INF && lhs.x === acc.x && lhs.y === acc.y;
+}
+
+/** Run by member j: verify the shares received and build its final share. */
+export function dkgFinalize(j, deals) {
+  let secret = 0n;
+  for (const d of deals) {
+    const s = d.shares.get(String(j));
+    if (!dkgVerifyShare(j, s, d.commitments)) throw new Error(`dealer gave an invalid share to member ${j}`);
+    secret = mod(secret + s, Q);
+  }
+  return { index: BigInt(j), secret, pub: scalarMul(G, secret) };
+}
+
+/** Committee public key = sum of the commitments to the constant terms. */
+export const dkgPublicKey = (deals) => deals.reduce((acc, d) => pointAdd(acc, d.commitments[0]), INF);

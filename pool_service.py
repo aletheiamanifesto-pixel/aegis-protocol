@@ -5,15 +5,15 @@ pool_service.py - Link between the backend and the ShieldedPool contract.
 
 Two jobs for the regulated operator:
 
-1. KYC CREDENTIAL ISSUANCE for the ZK circuit (`noir_circuits/spend`): signs with ECDSA-secp256k1
-   Poseidon2(DOMAIN_CREDENTIAL, pseudonym, tier, jurisdiction, expiry), the same hash
-   as `aegis_lib::credential` and `sdk/aegis-core.mjs`.
+1. KYC CREDENTIAL ISSUANCE for the ZK circuit (`noir_circuits/spend`): Schnorr signature on Grumpkin of
+   Poseidon2(DOMAIN_CREDENTIAL, pseudonym, tier, jurisdiction, expiry, person_tag), the same hash
+   as `aegis_lib::credential` and `sdk/aegis-core.mjs`. `person_tag` is one per person.
 2. RELAYER: forwards to the contract the transactions whose proof the user generated on THEIR
    device (the server never sees spending_secret or note amounts). It pays the
    gas and receives the fee indicated in ext_data.
 
 Configuration (env):
-  POOL_ISSUER_KEY     hex private key of the KYC issuer (register it with ShieldedPool.setIssuer)
+  POOL_ISSUER_KEY     hex Grumpkin scalar of the KYC issuer (Schnorr; GET /pool/issuer → setIssuer)
   POOL_ADDRESS        ShieldedPool address
   POOL_RELAYER_KEY    hex private key of the relayer (pays the gas)
   POOL_MIN_FEE        minimum fee in token units (default 0)
@@ -32,10 +32,19 @@ from typing import Any, Dict, List, Optional
 from eth_keys import keys
 
 from aegis_env import mocks_allowed, require_mocks
-from crypto_primitives import FIELD_PRIME, poseidon2_hash
+from crypto_primitives import (
+    FIELD_PRIME,
+    GRUMPKIN_G,
+    GRUMPKIN_ORDER,
+    grumpkin_mul,
+    poseidon2_hash,
+    schnorr_sign,
+)
 
 DOMAIN_CREDENTIAL = 4
-CREDENTIAL_TTL = 30 * 86_400  # short credentials: revoking = not renewing
+# 24 hours: without renewal a revoked person (e.g. sanctioned) cannot transact the next day.
+# Emergency revocation of ALL credentials: ShieldedPool.setIssuer(key, false).
+CREDENTIAL_TTL = 86_400
 
 # Bit index in the pool's jurisdiction mask (must match ShieldedPool.allowedJurisdictions).
 JURISDICTIONS: Dict[str, int] = {
@@ -61,18 +70,44 @@ def _key(env: str) -> keys.PrivateKey:
     return _dev_keys[env]
 
 
+_dev_issuer: Optional[int] = None
+
+
+def _issuer_secret() -> int:
+    """KYC issuer key: Grumpkin scalar (hex) in POOL_ISSUER_KEY. Simulated only in development."""
+    global _dev_issuer
+    raw = os.getenv("POOL_ISSUER_KEY", "").strip()
+    if raw:
+        k = int(raw, 16) % GRUMPKIN_ORDER
+        if k == 0:
+            raise PoolError("invalid POOL_ISSUER_KEY")
+        return k
+    require_mocks("POOL_ISSUER_KEY not configured")
+    if _dev_issuer is None:
+        _dev_issuer = int.from_bytes(os.urandom(32), "big") % (GRUMPKIN_ORDER - 1) + 1
+    return _dev_issuer
+
+
 def issuer_public_key() -> Dict[str, str]:
-    pub = _key("POOL_ISSUER_KEY").public_key.to_bytes()
-    return {"x": "0x" + pub[:32].hex(), "y": "0x" + pub[32:].hex(), "uncompressed": "0x04" + pub.hex()}
+    """Key to register with ShieldedPool.setIssuer(x, y, true)."""
+    pub = grumpkin_mul(GRUMPKIN_G, _issuer_secret())
+    return {"x": str(pub[0]), "y": str(pub[1])}
 
 
-def credential_hash(pseudonym: int, tier: int, jurisdiction: int, expiry: int) -> int:
-    return poseidon2_hash([DOMAIN_CREDENTIAL, pseudonym, tier, jurisdiction, expiry])
+def credential_hash(pseudonym: int, tier: int, jurisdiction: int, expiry: int, person_tag: int) -> int:
+    return poseidon2_hash([DOMAIN_CREDENTIAL, pseudonym, tier, jurisdiction, expiry, person_tag])
 
 
-def issue_credential(pseudonym_hex: str, tier: int, country: Optional[str], now: Optional[int] = None) -> Dict[str, Any]:
+def new_person_tag() -> str:
+    """One per PERSON (never per pseudonym): the daily rate limit is computed on this."""
+    return hex(int.from_bytes(os.urandom(32), "big") % FIELD_PRIME)
+
+
+def issue_credential(pseudonym_hex: str, tier: int, country: Optional[str], person_tag_hex: str,
+                     now: Optional[int] = None) -> Dict[str, Any]:
     try:
         pseudonym = int(pseudonym_hex, 16)
+        person_tag = int(person_tag_hex, 16)
     except (TypeError, ValueError):
         raise PoolError("invalid pseudonym")
     if not 0 < pseudonym < FIELD_PRIME:
@@ -83,15 +118,16 @@ def issue_credential(pseudonym_hex: str, tier: int, country: Optional[str], now:
         raise PoolError("jurisdiction not supported by the pool")
     jurisdiction = JURISDICTIONS[country.upper()]
     expiry = int(now or time.time()) + CREDENTIAL_TTL
-    digest = credential_hash(pseudonym, tier, jurisdiction, expiry).to_bytes(32, "big")
-    sig = _key("POOL_ISSUER_KEY").sign_msg_hash(digest)  # canonical (low-s), as the Noir circuit expects
-    rs = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big")
+    h = credential_hash(pseudonym, tier, jurisdiction, expiry, person_tag)
+    sig = schnorr_sign(_issuer_secret(), h)
     return {
         "pseudonym": "0x" + pseudonym.to_bytes(32, "big").hex(),
         "tier": tier,
         "jurisdiction": jurisdiction,
         "expiry": expiry,
-        "signature": "0x" + rs.hex(),
+        "person_tag": hex(person_tag),
+        "signature": {"r": {"x": str(sig["r"][0]), "y": str(sig["r"][1])},
+                      "s_lo": hex(sig["s_lo"]), "s_hi": hex(sig["s_hi"])},
         "issuer": issuer_public_key(),
     }
 
@@ -112,11 +148,12 @@ POOL_ABI = [{
             {"name": "publicIn", "type": "uint64"},
             {"name": "publicOut", "type": "uint64"},
             {"name": "timestamp", "type": "uint64"},
-            {"name": "issuer", "type": "tuple", "components": [{"name": "x", "type": "bytes32"}, {"name": "y", "type": "bytes32"}]},
+            {"name": "issuer", "type": "tuple", "components": _POINT},
             {"name": "taxEph", "type": "tuple", "components": _POINT},
             {"name": "taxCt", "type": "uint256[4]"},
             {"name": "amlEph", "type": "tuple", "components": _POINT},
             {"name": "amlCt", "type": "uint256[8]"},
+            {"name": "rateNullifier", "type": "uint256"},
         ]},
         {"name": "ext", "type": "tuple", "components": [
             {"name": "recipient", "type": "address"},
@@ -162,9 +199,9 @@ def relay(proof: Dict[str, Any], ext: Dict[str, Any]) -> RelayResult:
     args = (
         (bytes.fromhex(p["proof"].removeprefix("0x")), int(p["root"]), [int(x) for x in p["nullifiers"]],
          [int(x) for x in p["outCommitments"]], int(p["publicIn"]), int(p["publicOut"]), int(p["timestamp"]),
-         (bytes.fromhex(p["issuer"]["x"].removeprefix("0x")), bytes.fromhex(p["issuer"]["y"].removeprefix("0x"))),
+         (int(p["issuer"]["x"]), int(p["issuer"]["y"])),
          (int(p["taxEph"]["x"]), int(p["taxEph"]["y"])), [int(x) for x in p["taxCt"]],
-         (int(p["amlEph"]["x"]), int(p["amlEph"]["y"])), [int(x) for x in p["amlCt"]]),
+         (int(p["amlEph"]["x"]), int(p["amlEph"]["y"])), [int(x) for x in p["amlCt"]], int(p["rateNullifier"])),
         (Web3.to_checksum_address(ext["recipient"]), Web3.to_checksum_address(ext["relayer"]), int(ext["fee"]),
          bytes.fromhex(ext["encryptedOutput0"].removeprefix("0x")), bytes.fromhex(ext["encryptedOutput1"].removeprefix("0x"))),
     )

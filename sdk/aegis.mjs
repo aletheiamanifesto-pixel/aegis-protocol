@@ -4,6 +4,7 @@
 // same domain separators), so the values computed here satisfy the circuits.
 import { Barretenberg, BN254_FR_MODULUS, GRUMPKIN_G1_GENERATOR } from '@aztec/bb.js';
 import { createRequire } from 'module';
+import * as core from './aegis-core.mjs';
 
 const require = createRequire(import.meta.url);
 const { ethers } = require('ethers');
@@ -39,20 +40,12 @@ export class Aegis {
   }
   balanceCommitment(balance, blinding) { return this.poseidon2([DOMAIN.BALANCE, balance, blinding]); }
 
-  // ---- KYC credential (signed by the issuer with an ordinary secp256k1 key) ----
-  async credentialHash(owner, { tier, jurisdiction, expiry }) {
-    return this.poseidon2([DOMAIN.CREDENTIAL, owner, tier, jurisdiction, expiry]);
+  // ---- KYC credential: Schnorr on Grumpkin, same scheme as aegis_lib::credential ----
+  async credentialHash(owner, c) { return core.credentialHashV2(owner, c); }
+  async issueCredential(issuerSecret, owner, { tier, jurisdiction, expiry, personTag }) {
+    return core.issueCredentialV2(BigInt(issuerSecret), owner, { tier, jurisdiction, expiry, personTag });
   }
-  async issueCredential(issuerPrivateKey, owner, { tier, jurisdiction, expiry }) {
-    const key = new ethers.SigningKey(issuerPrivateKey);
-    const h = await this.credentialHash(owner, { tier, jurisdiction, expiry });
-    const sig = key.sign(hex(h));
-    return { tier, jurisdiction, expiry, signature: ethers.getBytes(ethers.concat([sig.r, sig.s])) };
-  }
-  static issuerPublicKey(issuerPrivateKey) {
-    const pub = ethers.getBytes(new ethers.SigningKey(issuerPrivateKey).publicKey).slice(1);
-    return { x: pub.slice(0, 32), y: pub.slice(32) };
-  }
+  static issuerPublicKey(issuerSecret) { return core.scalarMul(core.G, BigInt(issuerSecret)); }
 
   // ---- Auditor keys (Grumpkin) and decryption of the disclosure ciphertexts ----
   async grumpkinMul(point, scalar) {

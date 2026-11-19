@@ -35,17 +35,13 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public constant FIELD_SIZE = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
     uint32 public constant TREE_DEPTH = 20;
     uint32 public constant ROOT_HISTORY_SIZE = 64;
-    uint256 public constant NUM_PUBLIC_INPUTS = 99;
+    uint256 public constant NUM_PUBLIC_INPUTS = 39;
+    uint256 public constant EPOCH_SECONDS = 1 days;
     uint256 public constant MAX_PROOF_AGE = 1 hours;
 
     struct Point {
         uint256 x;
         uint256 y;
-    }
-
-    struct Issuer {
-        bytes32 x;
-        bytes32 y;
     }
 
     /// @dev Must match the order of the public inputs and outputs of noir_circuits/spend.
@@ -57,11 +53,12 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
         uint64 publicIn;
         uint64 publicOut;
         uint64 timestamp;
-        Issuer issuer;
+        Point issuer; // KYC issuer Schnorr-Grumpkin key
         Point taxEph;
         uint256[4] taxCt;
         Point amlEph;
         uint256[8] amlCt;
+        uint256 rateNullifier; // one per (person, day, slot): caps the daily tx count PER PERSON
     }
 
     struct ExtData {
@@ -83,11 +80,14 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
     uint32 public nextIndex;
 
     mapping(uint256 => bool) public nullifierSpent;
+    mapping(uint256 => bool) public rateNullifierUsed;
 
     // ---- Compliance policy ----
     mapping(bytes32 => bool) public issuerAllowed; // keccak256(x, y) → allowed
     uint64 public allowedJurisdictions;
     uint64[4] public tierLimits;
+    /// @notice Max transactions per day per person (all pseudonyms together).
+    uint32 public maxTxPerEpoch = 16;
     Point public taxKey;
     Point public amlKey;
 
@@ -101,6 +101,7 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
     event Disclosure(uint32 indexed leafIndex, Point taxEph, uint256[4] taxCt, Point amlEph, uint256[8] amlCt);
     event IssuerSet(bytes32 indexed id, bool allowed);
     event PolicyUpdated(uint64 allowedJurisdictions, uint64[4] tierLimits);
+    event RateLimitUpdated(uint32 maxTxPerEpoch);
     event AuditorKeysUpdated(Point taxKey, Point amlKey);
     event LimitsUpdated(uint256 tvlCap, uint256 maxDepositPerTx);
 
@@ -143,6 +144,7 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
         require(!nullifierSpent[p.nullifiers[0]] && !nullifierSpent[p.nullifiers[1]], "note already spent");
         require(issuerAllowed[keccak256(abi.encode(p.issuer.x, p.issuer.y))], "issuer not allowed");
         require(p.timestamp <= block.timestamp && block.timestamp - p.timestamp <= MAX_PROOF_AGE, "stale proof");
+        require(!rateNullifierUsed[p.rateNullifier], "daily transaction limit reached");
         require(ext.fee <= p.publicOut, "fee above withdrawal");
         if (p.publicOut > 0) require(ext.recipient != address(0), "no recipient");
 
@@ -153,6 +155,7 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
 
         require(verifier.verify(p.proof, _publicInputs(p, extDataHash(ext))), "invalid proof");
 
+        rateNullifierUsed[p.rateNullifier] = true;
         nullifierSpent[p.nullifiers[0]] = true;
         nullifierSpent[p.nullifiers[1]] = true;
         emit NewNullifier(p.nullifiers[0]);
@@ -195,8 +198,9 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
         pi[k++] = bytes32(uint256(p.timestamp));
         pi[k++] = bytes32(uint256(allowedJurisdictions));
         for (uint256 i = 0; i < 4; i++) pi[k++] = bytes32(uint256(tierLimits[i]));
-        for (uint256 i = 0; i < 32; i++) pi[k++] = bytes32(uint256(uint8(p.issuer.x[i])));
-        for (uint256 i = 0; i < 32; i++) pi[k++] = bytes32(uint256(uint8(p.issuer.y[i])));
+        pi[k++] = bytes32(uint256(maxTxPerEpoch));
+        pi[k++] = bytes32(p.issuer.x);
+        pi[k++] = bytes32(p.issuer.y);
         pi[k++] = bytes32(taxKey.x);
         pi[k++] = bytes32(taxKey.y);
         pi[k++] = bytes32(amlKey.x);
@@ -207,6 +211,7 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
         pi[k++] = bytes32(p.amlEph.x);
         pi[k++] = bytes32(p.amlEph.y);
         for (uint256 i = 0; i < 8; i++) pi[k++] = bytes32(p.amlCt[i]);
+        pi[k++] = bytes32(p.rateNullifier);
         assert(k == NUM_PUBLIC_INPUTS);
     }
 
@@ -254,7 +259,10 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
     // Governance (owner = multisig + timelock)
     // ------------------------------------------------------------------
 
-    function setIssuer(bytes32 x, bytes32 y, bool allowed) external onlyOwner {
+    /// @notice Register/remove a KYC issuer (Schnorr-Grumpkin key). Removing the key is the
+    ///         emergency revocation: ALL its credentials stop working immediately.
+    function setIssuer(uint256 x, uint256 y, bool allowed) external onlyOwner {
+        require(!allowed || _onGrumpkin(Point(x, y)), "issuer key not on curve");
         bytes32 id = keccak256(abi.encode(x, y));
         issuerAllowed[id] = allowed;
         emit IssuerSet(id, allowed);
@@ -268,6 +276,12 @@ contract ShieldedPool is Ownable2Step, Pausable, ReentrancyGuard {
     ///         decryptable only with the old keys (which the committee must keep).
     function setAuditorKeys(Point calldata _taxKey, Point calldata _amlKey) external onlyOwner {
         _setAuditorKeys(_taxKey, _amlKey);
+    }
+
+    function setRateLimit(uint32 _maxTxPerEpoch) external onlyOwner {
+        require(_maxTxPerEpoch > 0, "zero limit");
+        maxTxPerEpoch = _maxTxPerEpoch;
+        emit RateLimitUpdated(_maxTxPerEpoch);
     }
 
     function setLimits(uint256 _tvlCap, uint256 _maxDepositPerTx) external onlyOwner {
