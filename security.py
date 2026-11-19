@@ -151,3 +151,45 @@ def record_login(db, username: str, ip: Optional[str], success: bool) -> None:
             db_models.LoginAttempt.username == username, db_models.LoginAttempt.success.is_(False)
         ).delete(synchronize_session=False)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Second factor (TOTP)
+# ---------------------------------------------------------------------------
+
+def _totp_fernet():
+    from viewing_keys.persistence import _fernet
+
+    return _fernet()
+
+
+def encrypt_totp_secret(secret: str) -> str:
+    return _totp_fernet().encrypt(secret.encode()).decode()
+
+
+def check_totp(db, user, code: Optional[str]) -> bool:
+    """Verify the TOTP code of `user` (ORM object) and record the step used (anti-replay)."""
+    import totp
+
+    if not user.totp_secret:
+        return False
+    secret = _totp_fernet().decrypt(user.totp_secret.encode()).decode()
+    step = totp.verify(secret, code or "", last_step=user.totp_last_step)
+    if step is None:
+        return False
+    user.totp_last_step = step
+    db.commit()
+    return True
+
+
+def require_second_factor(db, current_user: Dict, code: Optional[str], *, mandatory: bool) -> None:
+    """mandatory=True: 2FA must be enabled (e.g. withdrawals). Otherwise required only if enabled."""
+    if not _db_available or db is None:
+        return
+    user = db.get(db_models.User, int(current_user["user_id"]))
+    if not user.totp_enabled:
+        if mandatory:
+            raise HTTPException(status_code=403, detail="Enable two-factor authentication to perform this operation")
+        return
+    if not check_totp(db, user, code):
+        raise HTTPException(status_code=401, detail="Two-factor code missing or invalid")

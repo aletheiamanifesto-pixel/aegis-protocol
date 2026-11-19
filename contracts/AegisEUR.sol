@@ -143,7 +143,10 @@ contract AegisEUR {
         emit Mint(to, amount, msg.sender);
     }
 
+    /// @notice A minter (the vault) can burn ONLY its own balance: the tokens of a withdrawal that
+    ///         the user put in escrow. Nobody can burn another person's balance.
     function burn(address from, uint256 amount) external whenNotPaused onlyMinter {
+        require(from == msg.sender, "Can only burn own balance");
         require(_balances[from] >= amount, "Insufficient balance");
         _balances[from] -= amount;
         _totalSupply -= amount;

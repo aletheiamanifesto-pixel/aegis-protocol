@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
-from security import require_owner
+from security import require_owner, require_second_factor
 from schemas import SendTransactionRequest
 
 try:
@@ -30,7 +30,7 @@ except ImportError:
     _ce_available = False
 
 try:
-    from transaction_processor import TransactionProcessor
+    from transaction_processor import TransactionError, TransactionProcessor
     _tp_available = True
 except ImportError:
     _tp_available = False
@@ -44,11 +44,22 @@ def transactions_send(
     current_user: Dict = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Broadcast an EURC transfer ALREADY SIGNED on the device.
+
+    Sender, recipient and amount are read from the signed transaction (not from fields that could
+    disagree with it); the private key never leaves the user's device.
+    """
     if not _tp_available:
         raise HTTPException(status_code=503, detail="Transaction processor not available")
+    tp = TransactionProcessor()
+    try:
+        tx = tp.decode_signed_transfer(req.signed_tx)
+    except TransactionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    # The sender must be a wallet of the authenticated user.
-    require_owner(db, current_user, req.from_address)
+    # The signer must be a wallet of the authenticated user; 2FA if enabled.
+    require_owner(db, current_user, tx["sender"])
+    require_second_factor(db, current_user, req.totp_code, mandatory=False)
 
     if _ce_available:
         engine = ComplianceEngine()
@@ -64,8 +75,8 @@ def transactions_send(
                 daily_limit = profile.daily_limit
                 single_tx_limit = profile.single_tx_limit
         result = engine.check_transaction(
-            req.from_address,
-            req.amount,
+            tx["sender"],
+            tx["amount"],
             kyc_verified=kyc_verified,
             daily_limit=daily_limit,
             single_tx_limit=single_tx_limit,
@@ -73,19 +84,18 @@ def transactions_send(
         if not result.approved:
             raise HTTPException(status_code=400, detail=result.message)
 
-    tp = TransactionProcessor()
-    tx_result = tp.send_eurc(req.encrypted_key, req.to_address, req.amount, req.proof_hash)
+    tx_result = tp.broadcast_signed(tx["raw"])
+    tx_result.update({"sender": tx["sender"], "recipient": tx["recipient"], "amount": tx["amount"]})
 
     if _db_available and db is not None:
-        txn = db_models.Transaction(
-            tx_hash=tx_result.get("tx_hash", ""),
-            sender_address=req.from_address,
-            recipient_address=req.to_address,
-            amount=req.amount,
+        db.add(db_models.Transaction(
+            tx_hash=tx_result["tx_hash"],
+            sender_address=tx["sender"],
+            recipient_address=tx["recipient"],
+            amount=tx["amount"],
             status=tx_result.get("status", "pending"),
             proof_hash=req.proof_hash,
-        )
-        db.add(txn)
+        ))
         db.commit()
 
     return tx_result

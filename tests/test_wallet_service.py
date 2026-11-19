@@ -14,41 +14,54 @@ from wallet_service import (
 )
 
 
+PW = "correct horse battery"
+PW2 = "another long passphrase"
+
+
 class TestCreateWallet:
     def test_create_wallet_returns_address(self):
-        result = create_wallet("test-password")
-        assert "address" in result
-        assert "encrypted_key" in result
-        assert "mnemonic" in result
-
-    def test_address_format(self):
-        result = create_wallet("password123")
+        result = create_wallet(PW)
         assert result["address"].startswith("0x")
+        assert result["encrypted_key"].startswith("aegis-kdf-v2$")
+        assert len(result["mnemonic"].split()) == 12
 
     def test_different_wallets_differ(self):
-        w1 = create_wallet("pw1")
-        w2 = create_wallet("pw2")
-        assert w1["address"] != w2["address"]
+        assert create_wallet(PW)["address"] != create_wallet(PW)["address"]
+
+    @pytest.mark.parametrize("weak", ["", "short", "password123", "aaaaaaaaaaaaaaaa"])
+    def test_weak_passwords_rejected(self, weak):
+        with pytest.raises(WalletError):
+            create_wallet(weak)
 
 
-class TestImportWallet:
-    def test_import_with_private_key(self):
-        # Create wallet first, then reimport
-        w = create_wallet("password")
-        pk = decrypt_wallet_key(w["encrypted_key"], "password")
-        imported = import_wallet(pk, "new-password")
-        assert "address" in imported
-        assert "encrypted_key" in imported
-
-    def test_decrypt_wallet_key(self):
-        w = create_wallet("mypassword")
-        pk = decrypt_wallet_key(w["encrypted_key"], "mypassword")
-        assert len(pk) > 0
+class TestKeyEncryption:
+    def test_roundtrip_and_reimport(self):
+        w = create_wallet(PW)
+        pk = decrypt_wallet_key(w["encrypted_key"], PW)
+        imported = import_wallet(pk, PW2)
+        assert imported["address"] == w["address"]
+        assert decrypt_wallet_key(imported["encrypted_key"], PW2) == pk
 
     def test_wrong_password_raises(self):
-        w = create_wallet("correct-password")
+        w = create_wallet(PW)
         with pytest.raises(WalletError):
-            decrypt_wallet_key(w["encrypted_key"], "wrong-password")
+            decrypt_wallet_key(w["encrypted_key"], PW2)
+
+    def test_salted_kdf_not_plain_sha256(self):
+        """Same password and key → different ciphertexts (random salt), and the legacy
+        Fernet key = SHA256(password) cannot open them."""
+        import base64
+        import hashlib
+
+        from cryptography.fernet import Fernet, InvalidToken
+
+        from wallet_service import encrypt_private_key
+
+        a, b = encrypt_private_key("ab" * 32, PW), encrypt_private_key("ab" * 32, PW)
+        assert a != b
+        legacy = Fernet(base64.urlsafe_b64encode(hashlib.sha256(PW.encode()).digest()))
+        with pytest.raises(InvalidToken):
+            legacy.decrypt(a.split("$", 2)[2].encode())
 
 
 class TestGetBalance:

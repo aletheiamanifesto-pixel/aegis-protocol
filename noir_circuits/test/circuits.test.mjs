@@ -229,5 +229,12 @@ test('real UltraHonk proof for spend (generate + verify)', { timeout: 900_000 },
   const tampered = { ...proof, publicInputs: proof.publicInputs.slice() };
   tampered.publicInputs[6] = hex(10_001n);
   assert.equal(await backend.verifyProof(tampered, { verifierTarget: 'evm' }).catch(() => false), false);
+  // ext_data_hash (index 8) binds recipient/relayer/fee: a front-runner who changes the recipient
+  // produces a different ext_data_hash and the SAME proof no longer verifies.
+  for (const idx of [8, 9 /* now */, 1 /* nullifier */, 99 - 16 /* first disclosure output */]) {
+    const t = { ...proof, publicInputs: proof.publicInputs.slice() };
+    t.publicInputs[idx] = hex(BigInt(t.publicInputs[idx]) + 1n);
+    assert.equal(await backend.verifyProof(t, { verifierTarget: 'evm' }).catch(() => false), false, `public input ${idx} not bound`);
+  }
   await api.destroy();
 });

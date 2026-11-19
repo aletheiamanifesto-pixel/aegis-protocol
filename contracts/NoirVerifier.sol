@@ -88,7 +88,11 @@ contract NoirVerifier {
         return verifiedProofs[proofHash];
     }
 
+    /// @notice The real verifier is set ONCE and cannot be replaced: the owner cannot later
+    ///         swap in a permissive verifier. A new verifier means a new deploy.
     function setBackend(address _backend) external onlyOwner {
+        require(address(backend) == address(0), "Backend already set");
+        require(_backend != address(0) && _backend.code.length > 0, "Backend must be a contract");
         backend = IHonkVerifier(_backend);
         emit BackendSet(_backend);
     }

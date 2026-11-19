@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from routers.auth import _get_current_user
-from security import get_db as _sec_get_db, require_owner
+from security import get_db as _sec_get_db, require_owner, require_second_factor
 from schemas import (
     DepositRequest,
     RecurringPaymentRequest,
@@ -64,6 +64,7 @@ def banking_withdraw(req: WithdrawRequest, current_user: Dict = Depends(_get_cur
     if not _bo_available:
         raise HTTPException(status_code=503, detail="Banking operations not available")
     require_owner(db, current_user, req.wallet_address)
+    require_second_factor(db, current_user, req.totp_code, mandatory=True)
     try:
         result = withdraw_eur(current_user["user_id"], req.amount, req.wallet_address, req.iban)
         return result

@@ -84,6 +84,12 @@ describe("NoirVerifier", function () {
       expect(await prodVerifier.verifyProofView(ethers.randomBytes(64), publicInputs)).to.equal(false);
     });
 
+    it("the backend cannot be replaced once set", async function () {
+      await prodVerifier.setBackend(await backend.getAddress());
+      const other = await (await ethers.getContractFactory("MockHonkVerifier")).deploy();
+      await expect(prodVerifier.setBackend(await other.getAddress())).to.be.revertedWith("Backend already set");
+    });
+
     it("only the owner sets the backend", async function () {
       const [, stranger] = await ethers.getSigners();
       await expect(prodVerifier.connect(stranger).setBackend(await backend.getAddress())).to.be.revertedWith("Not owner");

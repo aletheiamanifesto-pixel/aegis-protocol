@@ -50,11 +50,14 @@ def _login(client, username: str) -> dict:
 # ---------------------------------------------------------------- ownership (IDOR)
 
 def test_cannot_send_from_someone_elses_address(client):
+    """A tx signed by a key whose address is not linked to the account is refused."""
+    from eth_account import Account
+
+    from tests.test_main_app import _signed_transfer
+
     h = _register_and_login(client, "_idor_tx")
-    r = client.post("/transactions/send", json={
-        "from_address": OTHER, "to_address": "0x" + "12" * 20, "amount": 1.0,
-        "encrypted_key": "x", "password": "walletpass",
-    }, headers=h)
+    stranger = Account.create()
+    r = client.post("/transactions/send", json={"signed_tx": _signed_transfer(stranger, "0x" + "12" * 20, 1.0)}, headers=h)
     assert r.status_code == 403
 
 
@@ -78,12 +81,20 @@ def test_banking_and_bridge_require_ownership(client):
 
 
 def test_address_cannot_be_claimed_twice(client):
-    """Importing someone else's address does not let you take it over."""
+    """Even someone holding the key cannot move an address that is already linked to another account."""
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+
+    from tests.test_main_app import _link
+
     a = _register_and_login(client, "_claim_a")
     b = _register_and_login(client, "_claim_b")
-    pk = "0x" + "4c" * 32
-    assert client.post("/wallet/import", json={"mnemonic_or_private_key": pk, "password": "p"}, headers=a).status_code == 200
-    assert client.post("/wallet/import", json={"mnemonic_or_private_key": pk, "password": "p"}, headers=b).status_code == 409
+    acct = Account.create()
+    _link(client, a, acct)
+    ch = client.post("/wallet/link/challenge", headers=b).json()
+    sig = acct.sign_message(encode_defunct(text=ch["message"])).signature.hex()
+    r = client.post("/wallet/link", json={"address": acct.address, "nonce": ch["nonce"], "signature": sig}, headers=b)
+    assert r.status_code == 409
 
 
 # ---------------------------------------------------------------- KYC

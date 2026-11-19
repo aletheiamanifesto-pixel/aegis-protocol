@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("AegisVault", function () {
   let AegisEUR, AegisVault;
@@ -107,52 +108,72 @@ describe("AegisVault", function () {
 
   // ─── Withdraw ─────────────────────────────────────────────────────────────────
 
-  describe("Withdraw", function () {
+  describe("Withdraw (user escrow)", function () {
     const txRef = ethers.keccak256(ethers.toUtf8Bytes("tx-ref-001"));
-    const iban = ethers.id("payout:DE89370400440532013000:2026-11-04"); // hash, never the raw IBAN
+    const payout = ethers.id("payout:DE89370400440532013000:2026-11-04"); // hash, never the raw IBAN
+    const bankRef = ethers.id("sepa:E2E-123");
 
     beforeEach(async function () {
       await vault.connect(signer1).deposit(alice.address, 5000n, txRef);
+      await aegisEUR.connect(alice).approve(await vault.getAddress(), 5000n);
     });
 
-    it("signer can withdraw and burns tokens from user", async function () {
-      await vault.connect(signer1).withdraw(alice.address, 2000n, iban);
+    async function request(amount = 2000n) {
+      await vault.connect(alice).requestWithdrawal(amount, payout);
+      return await vault.withdrawalCount();
+    }
+
+    it("the user puts the tokens in escrow, the signers burn only those", async function () {
+      const id = await request();
       expect(await aegisEUR.balanceOf(alice.address)).to.equal(3000n);
-    });
-
-    it("updates totalEURWithdrawn", async function () {
-      await vault.connect(signer1).withdraw(alice.address, 2000n, iban);
-      expect(await vault.totalEURWithdrawn()).to.equal(2000n);
-    });
-
-    it("emits Withdrawn event", async function () {
-      await expect(vault.connect(signer1).withdraw(alice.address, 2000n, iban))
+      expect(await vault.totalEscrowed()).to.equal(2000n);
+      await expect(vault.connect(signer1).completeWithdrawal(id, payout, bankRef))
         .to.emit(vault, "Withdrawn")
-        .withArgs(alice.address, 2000n, iban);
+        .withArgs(id, alice.address, 2000n, bankRef);
+      expect(await vault.totalEURWithdrawn()).to.equal(2000n);
+      expect(await aegisEUR.totalSupply()).to.equal(3000n);
     });
 
-    it("non-signer cannot withdraw", async function () {
-      await expect(
-        vault.connect(alice).withdraw(alice.address, 100n, iban)
-      ).to.be.revertedWith("Not a signer");
+    it("signers can no longer burn a user's balance on their own", async function () {
+      expect(vault.withdraw).to.equal(undefined);
+      const bob = (await ethers.getSigners())[5];
+      await vault.connect(signer1).deposit(bob.address, 100n, ethers.id("bob-dep"));
+      await expect(vault.connect(signer1).completeWithdrawal(99, payout, bankRef)).to.be.revertedWith("Not pending");
+      expect(await aegisEUR.balanceOf(bob.address)).to.equal(100n);
     });
 
-    it("reverts when user has insufficient balance", async function () {
-      await expect(
-        vault.connect(signer1).withdraw(alice.address, 6000n, iban)
-      ).to.be.revertedWith("Insufficient AEGIS EUR");
+    it("the payout ref must be the one chosen by the user", async function () {
+      const id = await request();
+      await expect(vault.connect(signer1).completeWithdrawal(id, ethers.id("other IBAN"), bankRef)).to.be.revertedWith(
+        "Payout ref mismatch"
+      );
     });
 
-    it("reverts when user is zero address", async function () {
-      await expect(
-        vault.connect(signer1).withdraw(ethers.ZeroAddress, 100n, iban)
-      ).to.be.revertedWith("User zero");
+    it("non-signer cannot complete", async function () {
+      const id = await request();
+      await expect(vault.connect(alice).completeWithdrawal(id, payout, bankRef)).to.be.revertedWith("Not a signer");
     });
 
-    it("reverts when amount is zero", async function () {
-      await expect(
-        vault.connect(signer1).withdraw(alice.address, 0n, iban)
-      ).to.be.revertedWith("Zero amount");
+    it("rejection returns the tokens to the user", async function () {
+      const id = await request();
+      await expect(vault.connect(signer1).rejectWithdrawal(id)).to.emit(vault, "WithdrawalRefunded");
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(5000n);
+    });
+
+    it("after the timeout the user takes back their tokens if the payout did not arrive", async function () {
+      const id = await request();
+      await expect(vault.connect(alice).cancelWithdrawal(id)).to.be.revertedWith("Timeout not reached");
+      await time.increase(7 * 24 * 3600);
+      await vault.connect(alice).cancelWithdrawal(id);
+      expect(await aegisEUR.balanceOf(alice.address)).to.equal(5000n);
+      await expect(vault.connect(signer1).completeWithdrawal(id, payout, bankRef)).to.be.revertedWith("Not pending");
+    });
+
+    it("without approve the request fails, and zero amount/ref are rejected", async function () {
+      await aegisEUR.connect(alice).approve(await vault.getAddress(), 0n);
+      await expect(vault.connect(alice).requestWithdrawal(100n, payout)).to.be.reverted;
+      await expect(vault.connect(alice).requestWithdrawal(0n, payout)).to.be.revertedWith("Zero amount");
+      await expect(vault.connect(alice).requestWithdrawal(1n, ethers.ZeroHash)).to.be.revertedWith("Missing payout ref");
     });
   });
 
@@ -173,7 +194,9 @@ describe("AegisVault", function () {
 
     it("getReserveRatio decreases after withdrawal", async function () {
       await vault.connect(signer1).deposit(alice.address, 2000n, txRef);
-      await vault.connect(signer1).withdraw(alice.address, 1000n, iban);
+      await aegisEUR.connect(alice).approve(await vault.getAddress(), 1000n);
+      await vault.connect(alice).requestWithdrawal(1000n, iban);
+      await vault.connect(signer1).completeWithdrawal(1, iban, ethers.id("bank"));
       // eurReserve = 2000 - 1000 = 1000, supply = 1000, ratio = 10000
       expect(await vault.getReserveRatio()).to.equal(10000n);
     });
@@ -355,15 +378,16 @@ describe("AegisVault", function () {
       expect(await aegisEUR.balanceOf(alice.address)).to.equal(0n);
     });
 
-    it("two identical withdrawals are two distinct operations", async function () {
+    it("completing a withdrawal requires the threshold too", async function () {
       await vault.connect(signer1).deposit(alice.address, 1000n, txRef);
       await vault.connect(signer2).deposit(alice.address, 1000n, txRef);
       const ref = ethers.id("payout-1");
-      for (let i = 0; i < 2; i++) {
-        await vault.connect(signer1).withdraw(alice.address, 100n, ref);
-        await vault.connect(signer2).withdraw(alice.address, 100n, ref);
-      }
-      expect(await aegisEUR.balanceOf(alice.address)).to.equal(800n);
+      await aegisEUR.connect(alice).approve(await vault.getAddress(), 300n);
+      await vault.connect(alice).requestWithdrawal(100n, ref);
+      await vault.connect(signer1).completeWithdrawal(1, ref, ethers.id("bank-1"));
+      expect(await vault.totalEURWithdrawn()).to.equal(0n);
+      await vault.connect(signer2).completeWithdrawal(1, ref, ethers.id("bank-1"));
+      expect(await vault.totalEURWithdrawn()).to.equal(100n);
     });
   });
 

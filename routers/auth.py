@@ -23,6 +23,8 @@ from security import (
     ROLES,
     SECRET_KEY,  # noqa: F401 - re-exported for backwards compatibility
     check_login_allowed,
+    check_totp,
+    encrypt_totp_secret,
     create_access_token,
     get_current_user,
     record_login,
@@ -103,6 +105,10 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         record_login(db, req.username, ip, success=False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    if user.totp_enabled and not check_totp(db, user, req.totp_code):
+        record_login(db, req.username, ip, success=False)
+        raise HTTPException(status_code=401, detail="Two-factor code required or invalid")
+
     record_login(db, req.username, ip, success=True)
     token = create_access_token(user, ACCESS_TOKEN_EXPIRE_MINUTES)
     return {"access_token": token, "token_type": "bearer"}
@@ -149,3 +155,48 @@ def set_role(
                               details={"target_user": user_id, "role": req.role, "authority_type": user.authority_type}))
     db.commit()
     return {"user_id": user_id, "role": user.role, "authority_type": user.authority_type}
+
+
+# ---------------------------------------------------------------------------
+# Two-factor authentication (TOTP)
+# ---------------------------------------------------------------------------
+
+class TotpCode(BaseModel):
+    code: str
+
+
+@router.post("/auth/2fa/setup")
+def totp_setup(current_user: Dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Generate a new secret (not active until confirmed with /auth/2fa/enable)."""
+    import totp
+
+    user = db.get(db_models.User, int(current_user["user_id"]))
+    if user.totp_enabled:
+        raise HTTPException(status_code=409, detail="2FA already active: disable it first")
+    secret = totp.new_secret()
+    user.totp_secret = encrypt_totp_secret(secret)
+    user.totp_last_step = None
+    db.commit()
+    return {"secret": secret, "otpauth_uri": totp.provisioning_uri(secret, user.username)}
+
+
+@router.post("/auth/2fa/enable")
+def totp_enable(req: TotpCode, current_user: Dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.get(db_models.User, int(current_user["user_id"]))
+    if not user.totp_secret or not check_totp(db, user, req.code):
+        raise HTTPException(status_code=400, detail="Invalid code")
+    user.totp_enabled = True
+    user.token_version = int(user.token_version or 0) + 1  # sessions opened without 2FA end
+    db.commit()
+    return {"totp_enabled": True, "message": "2FA active: log in again"}
+
+
+@router.post("/auth/2fa/disable")
+def totp_disable(req: TotpCode, current_user: Dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.get(db_models.User, int(current_user["user_id"]))
+    if not user.totp_enabled or not check_totp(db, user, req.code):
+        raise HTTPException(status_code=400, detail="Invalid code")
+    user.totp_enabled, user.totp_secret, user.totp_last_step = False, None, None
+    user.token_version = int(user.token_version or 0) + 1
+    db.commit()
+    return {"totp_enabled": False}

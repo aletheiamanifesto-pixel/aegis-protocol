@@ -19,110 +19,82 @@ class WalletError(Exception):
     pass
 
 
-def _get_fernet(password: str) -> Fernet:
-    """Derive a Fernet key from a password."""
-    key = base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
-    return Fernet(key)
+MIN_PASSWORD_LENGTH = 12
+_KDF_PREFIX = "aegis-kdf-v2"
+# scrypt: memory-hard, ~64 MiB and ~0.1-0.3 s per attempt; brute-forcing a stolen DB costs dearly.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**16, 8, 1
+
+
+def check_password_strength(password: str) -> None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise WalletError(f"Password too short: at least {MIN_PASSWORD_LENGTH} characters")
+    if len(set(password)) < 6:
+        raise WalletError("Password too repetitive")
+
+
+def _derive_key(password: str, salt: bytes) -> bytes:
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+    kdf = Scrypt(salt=salt, length=32, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
+    return base64.urlsafe_b64encode(kdf.derive(password.encode()))
+
+
+def encrypt_private_key(private_key_hex: str, password: str) -> str:
+    """Encrypt a private key with scrypt(password, random salt) + Fernet.
+
+    Format: aegis-kdf-v2$<salt base64>$<Fernet token>. It is for CLIENT-SIDE storage
+    (app, CLI): the AEGIS API never receives private keys.
+    """
+    check_password_strength(password)
+    salt = os.urandom(16)
+    token = Fernet(_derive_key(password, salt)).encrypt(private_key_hex.encode()).decode()
+    return f"{_KDF_PREFIX}${base64.urlsafe_b64encode(salt).decode()}${token}"
 
 
 def create_wallet(password: str) -> Dict[str, str]:
+    """Generate a new wallet (12-word mnemonic) with the key encrypted under scrypt.
+
+    To be used ON THE CLIENT (app/CLI). The API does not expose this function: the server
+    never handles mnemonics or private keys.
     """
-    Generate a new wallet with mnemonic phrase.
+    from eth_account import Account
+    from mnemonic import Mnemonic
 
-    Args:
-        password: Password used to encrypt the private key at rest.
-
-    Returns:
-        Dict with address, mnemonic, encrypted_key.
-    """
-    try:
-        from eth_account import Account
-        from mnemonic import Mnemonic
-        Account.enable_unaudited_hdwallet_features()
-
-        mnemo = Mnemonic("english")
-        mnemonic_phrase = mnemo.generate(strength=128)  # 12 words
-
-        account = Account.from_mnemonic(mnemonic_phrase)
-        private_key_hex = account.key.hex()
-
-        fernet = _get_fernet(password)
-        encrypted_key = fernet.encrypt(private_key_hex.encode()).decode()
-
-        return {
-            "address": account.address,
-            "mnemonic": mnemonic_phrase,
-            "encrypted_key": encrypted_key,
-        }
-
-    except ImportError:
-        # Without eth_account there is no valid address: simulation only in development.
-        from aegis_env import require_mocks
-
-        require_mocks("wallet creation (eth_account missing)")
-        import secrets
-        private_key_hex = secrets.token_hex(32)
-        mnemonic_phrase = "mock mnemonic phrase for development testing only do not use"
-        account_address = "0x" + hashlib.sha256(private_key_hex.encode()).hexdigest()[:40]
-
-        fernet = _get_fernet(password)
-        encrypted_key = fernet.encrypt(private_key_hex.encode()).decode()
-
-        return {
-            "address": account_address,
-            "mnemonic": mnemonic_phrase,
-            "encrypted_key": encrypted_key,
-            "warning": "Development mode: use real keys in production",
-        }
+    check_password_strength(password)
+    Account.enable_unaudited_hdwallet_features()
+    mnemonic_phrase = Mnemonic("english").generate(strength=128)
+    account = Account.from_mnemonic(mnemonic_phrase)
+    return {
+        "address": account.address,
+        "mnemonic": mnemonic_phrase,
+        "encrypted_key": encrypt_private_key(account.key.hex(), password),
+    }
 
 
 def import_wallet(mnemonic_or_private_key: str, password: str) -> Dict[str, str]:
-    """
-    Import an existing wallet from mnemonic or private key.
+    """Import from a 12/24-word mnemonic or a private key (client side)."""
+    from eth_account import Account
 
-    Args:
-        mnemonic_or_private_key: 12/24-word mnemonic OR 0x-prefixed private key.
-        password: Password to encrypt the key at rest.
-
-    Returns:
-        Dict with address and encrypted_key.
-    """
-    try:
-        from eth_account import Account
-        Account.enable_unaudited_hdwallet_features()
-
-        words = mnemonic_or_private_key.strip().split()
-        if len(words) in (12, 24):
-            account = Account.from_mnemonic(mnemonic_or_private_key.strip())
-        else:
-            account = Account.from_key(mnemonic_or_private_key.strip())
-
-        private_key_hex = account.key.hex()
-        fernet = _get_fernet(password)
-        encrypted_key = fernet.encrypt(private_key_hex.encode()).decode()
-
-        return {"address": account.address, "encrypted_key": encrypted_key}
-
-    except ImportError:
-        from aegis_env import require_mocks
-
-        require_mocks("wallet import (eth_account missing)")
-        private_key_hex = mnemonic_or_private_key.strip().lstrip("0x")
-        account_address = "0x" + hashlib.sha256(private_key_hex.encode()).hexdigest()[:40]
-
-        fernet = _get_fernet(password)
-        encrypted_key = fernet.encrypt(private_key_hex.encode()).decode()
-
-        return {"address": account_address, "encrypted_key": encrypted_key}
+    check_password_strength(password)
+    Account.enable_unaudited_hdwallet_features()
+    secret = mnemonic_or_private_key.strip()
+    if len(secret.split()) in (12, 24):
+        account = Account.from_mnemonic(secret)
+    else:
+        account = Account.from_key(secret)
+    return {"address": account.address, "encrypted_key": encrypt_private_key(account.key.hex(), password)}
 
 
 def decrypt_wallet_key(encrypted_key: str, password: str) -> str:
-    """Decrypt an encrypted private key."""
+    """Decrypt a key encrypted with encrypt_private_key."""
     try:
-        fernet = _get_fernet(password)
-        return fernet.decrypt(encrypted_key.encode()).decode()
-    except Exception as e:
-        raise WalletError("Failed to decrypt wallet key: wrong password?") from e
+        prefix, salt_b64, token = encrypted_key.split("$", 2)
+        if prefix != _KDF_PREFIX:
+            raise ValueError("unknown format")
+        key = _derive_key(password, base64.urlsafe_b64decode(salt_b64))
+        return Fernet(key).decrypt(token.encode()).decode()
+    except Exception as e:  # noqa: BLE001 - every failure is "wrong password or corrupted file"
+        raise WalletError("Failed to decrypt wallet key: wrong password or corrupted data") from e
 
 
 def get_balance(address: str) -> float:
