@@ -235,8 +235,8 @@ tr:last-child td { border-bottom: 0; }
     </div>
     <div class="panel">
       <h3>Cosa è reale in questa demo</h3>
-      <p class="small">Reali: hash Poseidon2, impegni delle note, nullifier, albero di Merkle (gli stessi valori dei circuiti Noir e del contratto), cifratura per l'auditor su curva Grumpkin, decifratura a soglia 2 su 3, regole di disclosure.</p>
-      <p class="small">Simulati: la blockchain (qui è in memoria nella pagina), la prova ZK (qui i vincoli del circuito <span class="code">spend</span> vengono controllati in JavaScript invece che dimostrati), la firma del KYC se la libreria non si carica.</p>
+      <p class="small">Reali: hash Poseidon2, impegni delle note, nullifier, albero di Merkle (gli stessi valori dei circuiti Noir e del contratto), firma Schnorr della credenziale KYC, cifratura per l'auditor su curva Grumpkin, chiavi del comitato generate senza distributore (DKG) e quote verificate (DLEQ), decifratura 2 su 3, regole di disclosure.</p>
+      <p class="small">Simulati: la blockchain (qui è in memoria nella pagina), la prova ZK (qui i vincoli del circuito <span class="code">spend</span> vengono controllati in JavaScript invece che dimostrati).</p>
       <p class="small muted">Tutte le persone e gli importi sono di esempio. Ricaricando la pagina si riparte da capo.</p>
     </div>
   </section>
@@ -253,7 +253,6 @@ tr:last-child td { border-bottom: 0; }
   </nav>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
 <script type="module">
 import * as core from './lib/aegis-core.mjs';
 
@@ -277,26 +276,30 @@ const MAX_DEPOSIT = 100_000n;               // 1,000 € per deposit (controlled
 const TVL_CAP = 5_000_000n;                 // 50,000 €
 
 const MEMBERS = ['Responsabile compliance', 'Custode indipendente (notaio)', 'Revisore esterno'];
-const taxKey = core.auditorKeypair(), amlKey = core.auditorKeypair();
-const committee = {
-  tax: core.splitSecret(taxKey.secret, 2, 3),
-  aml: core.splitSecret(amlKey.secret, 2, 3),
-};
+// Committee keys generated with DKG (no "dealer"): each member deals a polynomial,
+// nobody ever knows the whole key. Each partial share comes with a DLEQ proof.
+function dkgCommittee() {
+  const deals = [1, 2, 3].map(() => core.dkgDeal(2, 3));
+  const members = [1, 2, 3].map((j) => core.dkgFinalize(j, deals));
+  return { pub: core.dkgPublicKey(deals), members, pubs: new Map(members.map((m) => [String(m.index), m.pub])) };
+}
+const taxCommittee = dkgCommittee(), amlCommittee = dkgCommittee();
+const taxKey = { pub: taxCommittee.pub }, amlKey = { pub: amlCommittee.pub };
+const committee = { tax: taxCommittee.members, aml: amlCommittee.members };
+const committeePubs = { tax: taxCommittee.pubs, aml: amlCommittee.pubs };
 // The split secrets live only "in the members' hands": the page forgets the whole keys.
-delete taxKey.secret; delete amlKey.secret;
 
-const hasEthers = typeof window.ethers !== 'undefined';
-const issuerWallet = hasEthers ? window.ethers.Wallet.createRandom() : null;
+const issuerSecret = core.randomScalar(core.Q); // Schnorr-Grumpkin key of the KYC issuer
+const issuerPub = core.scalarMul(core.G, issuerSecret);
 const kycRegistry = new Map(); // owner → identity, kept ONLY by the KYC issuer (off-chain)
 
 function issueCredential(user, tier, jurisdiction) {
-  const expiry = BigInt(nowS() + 30 * DAY); // short credentials: revoking = not renewing
-  const c = { tier, jurisdiction, expiry };
-  const h = core.credentialHash(user.owner, c);
-  let signature = 'firma simulata';
-  if (issuerWallet) signature = issuerWallet.signingKey.sign(core.toHex(h)).serialized;
+  const expiry = BigInt(nowS() + DAY); // 24 hours: revoking = not renewing
+  user.personTag ??= core.randomField(); // one per person, shared by all their pseudonyms
+  const c = core.issueCredentialV2(issuerSecret, user.owner, { tier, jurisdiction, expiry, personTag: user.personTag });
+  if (!core.schnorrVerify(issuerPub, c.hash, c.sig)) throw new Error('invalid credential signature');
   kycRegistry.set(user.owner, { name: user.name, fiscal: user.fiscal });
-  return { ...c, hash: h, signature };
+  return c;
 }
 
 function makeUser(name, fiscal, tier) {
@@ -574,7 +577,7 @@ async function sign(i) {
   await busy(() => {
     for (const idx of d.txs) {
       const ev = pool.events.find((e) => e.index === idx);
-      (partials[keyName][idx] ??= []).push(core.partialDecrypt(committee[keyName][i], ev[keyName].eph));
+      (partials[keyName][idx] ??= []).push(core.partialDecryptWithProof(committee[keyName][i], ev[keyName].eph));
     }
   });
   signed.add(i);
@@ -592,7 +595,8 @@ function reveal(keyName) {
   const nameOf = (o) => (o === me.owner ? 'Giulia (pseud.)' : o === marco.owner ? 'Marco (pseud.)' : short(o));
   const rows = d.txs.map((idx) => {
     const ev = pool.events.find((e) => e.index === idx);
-    const pt = core.thresholdDecrypt(partials[keyName][idx].slice(0, d.approvals.t), ev[keyName].ct);
+    // each share is verified with its DLEQ proof before combining: a member cannot cheat
+    const pt = core.thresholdDecryptVerified(partials[keyName][idx].slice(0, d.approvals.t), committeePubs[keyName], ev[keyName].eph, ev[keyName].ct);
     return { idx, ev, pt };
   });
   let head, body;

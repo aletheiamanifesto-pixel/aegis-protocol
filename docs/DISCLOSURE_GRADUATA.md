@@ -118,11 +118,15 @@ con cifratura distinta per livello (il fisco tecnicamente *non può* vedere ciò
 
 1. Generare i verificatori Solidity reali (`npm run build:circuits`, richiede internet)
    e una prova end-to-end su testnet.
-2. Chiavi a soglia: fatta la decifratura t-su-n (Shamir + quote parziali, `sdk/aegis-core.mjs`).
-   Mancano DKG (nessun "dealer" che conosce la chiave intera) e prove DLEQ sulle quote.
+2. Chiavi a soglia: fatte. DKG Pedersen/Feldman (nessuno conosce la chiave intera, un dealer
+   che bara viene scoperto) e prove DLEQ su ogni quota parziale (un membro disonesto non può
+   alterare la decifratura). Implementate e testate in `sdk/aegis-core.mjs`; manca il protocollo di
+   rete tra i membri (oggi le quote si scambiano fuori banda).
 3. Modulo AI (`disclosure_ai/triage.py`): fatto, con output strutturato e test di prompt
    injection su un client simulato. Manca una valutazione su documenti reali.
-4. Revoca delle credenziali: oggi la revoca è "non rinnovare" (credenziali brevi, es. 30 giorni).
+4. Revoca delle credenziali: credenziali da 24 ore (revoca = non rinnovare) e revoca d'emergenza di
+   tutte le credenziali di un emittente con `ShieldedPool.setIssuer(x, y, false)`. Limite giornaliero
+   per PERSONA (non per pseudonimo) con rate nullifier legati al `person_tag` della credenziale.
 5. Generazione delle prove sul dispositivo dell'utente (bb.js nel browser), non sul server.
 6. Audit di sicurezza di circuiti e contratti, bug bounty, lancio con limiti (TVL cap).
 7. Parere legale: ruolo dell'operatore (CASP), registro, Travel Rule, GDPR (le note cifrate

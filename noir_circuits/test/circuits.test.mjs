@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js';
 import {
-  Aegis, MerkleTree, buildSpend, execute, loadCircuit, hex, randomField, toNoirBytes,
+  Aegis, MerkleTree, buildSpend, execute, loadCircuit, hex, randomField,
   ISSUER_KEY, NOW, IT, ALLOWED,
 } from './helpers.mjs';
 
@@ -23,6 +23,7 @@ async function alice(tier = 1, opts = {}) {
   const owner = await aegis.ownerPubkey(secret);
   const credential = await aegis.issueCredential(opts.issuerKey ?? ISSUER_KEY, owner, {
     tier, jurisdiction: opts.jurisdiction ?? IT, expiry: opts.expiry ?? NOW + 86_400n,
+    personTag: opts.personTag ?? randomField(),
   });
   return { secret, owner, credential };
 }
@@ -116,7 +117,7 @@ test('rejects: duplicate nullifier', async () => {
 });
 
 test('rejects: credential from an unregistered issuer', async () => {
-  const u = await alice(1, { issuerKey: '0x' + '99'.repeat(32) });
+  const u = await alice(1, { issuerKey: 0x9999n });
   const tree = await MerkleTree.create(aegis);
   const { inputs } = await buildSpend(aegis, tree, {
     secret: u.secret, asset: ASSET, credential: u.credential, taxKey: tax.pub, amlKey: aml.pub,
@@ -171,6 +172,26 @@ test('rejects: auditor key not on the curve', async () => {
   await expectFail(execute('spend', inputs), /auditor key not on curve/);
 });
 
+test('rate limit: slot within the limit, and the same person has the same rate nullifier on every pseudonym', async () => {
+  const personTag = randomField();
+  const a = await alice(1, { personTag });
+  const b = await alice(1, { personTag }); // second pseudonym of the SAME person
+  const mk = async (u, slot, maxTx) => {
+    const tree = await MerkleTree.create(aegis);
+    return (await buildSpend(aegis, tree, {
+      secret: u.secret, asset: ASSET, credential: u.credential, taxKey: tax.pub, amlKey: aml.pub,
+      inputs: [], publicIn: 100n, rateSlot: slot,
+      outputs: [{ amount: 100n, owner: u.owner, blinding: randomField() }, { amount: 0n, owner: u.owner, blinding: randomField() }],
+    }, { maxTx })).inputs;
+  };
+  const ra = (await execute('spend', await mk(a, 3, 16))).returnValue[4];
+  const rb = (await execute('spend', await mk(b, 3, 16))).returnValue[4];
+  assert.equal(ra, rb); // the contract accepts only one of the two: N pseudonyms do not multiply the limit
+  const core = await import('../../sdk/aegis-core.mjs');
+  assert.equal(BigInt(ra), core.rateNullifier(personTag, NOW, 3));
+  await expectFail(execute('spend', await mk(a, 16, 16)), /rate slot out of range/);
+});
+
 test('balance_proof: binding commitment (no fake balance)', async () => {
   const blinding = randomField();
   const commitment = await aegis.balanceCommitment(70_000n, blinding);
@@ -188,10 +209,12 @@ test('balance_proof: binding commitment (no fake balance)', async () => {
 test('compliance_proof: minimum tier and scope nullifier', async () => {
   const u = await alice(2);
   const issuer = Aegis.issuerPublicKey(ISSUER_KEY);
+  const sig = u.credential.sig;
   const base = {
-    issuer_pk_x: toNoirBytes(issuer.x), issuer_pk_y: toNoirBytes(issuer.y), now: NOW.toString(),
+    issuer_key: { x: hex(issuer.x), y: hex(issuer.y) }, now: NOW.toString(),
     allowed_jurisdictions: ALLOWED.toString(), scope: hex(777n), spending_secret: hex(u.secret),
-    credential: { tier: '2', jurisdiction: String(IT), expiry: u.credential.expiry.toString(), signature: toNoirBytes(u.credential.signature) },
+    credential: { tier: '2', jurisdiction: String(IT), expiry: u.credential.expiry.toString(), person_tag: hex(u.credential.personTag),
+      sig_r: { x: hex(sig.R.x), y: hex(sig.R.y) }, sig_s_lo: hex(sig.sLo), sig_s_hi: hex(sig.sHi) },
   };
   const { returnValue } = await execute('compliance_proof', { ...base, min_tier: '2' });
   assert.equal(BigInt(returnValue), await aegis.poseidon2([777n, u.secret]));
@@ -231,7 +254,8 @@ test('real UltraHonk proof for spend (generate + verify)', { timeout: 900_000 },
   assert.equal(await backend.verifyProof(tampered, { verifierTarget: 'evm' }).catch(() => false), false);
   // ext_data_hash (index 8) binds recipient/relayer/fee: a front-runner who changes the recipient
   // produces a different ext_data_hash and the SAME proof no longer verifies.
-  for (const idx of [8, 9 /* now */, 1 /* nullifier */, 99 - 16 /* first disclosure output */]) {
+  assert.equal(proof.publicInputs.length, 39);
+  for (const idx of [8, 9 /* now */, 1 /* nullifier */, 16 /* issuer key */, 22 /* first disclosure output */, 38 /* rate nullifier */]) {
     const t = { ...proof, publicInputs: proof.publicInputs.slice() };
     t.publicInputs[idx] = hex(BigInt(t.publicInputs[idx]) + 1n);
     assert.equal(await backend.verifyProof(t, { verifierTarget: 'evm' }).catch(() => false), false, `public input ${idx} not bound`);

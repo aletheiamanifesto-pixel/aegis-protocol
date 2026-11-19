@@ -42,7 +42,7 @@ test('decrypts the ciphertexts produced by the REAL circuit, also with a 2-of-3 
 
   const secret = core.randomField();
   const owner = core.ownerPubkey(secret);
-  const credential = await bb.issueCredential(ISSUER_KEY, owner, { tier: 1, jurisdiction: IT, expiry: NOW + 100n });
+  const credential = await bb.issueCredential(ISSUER_KEY, owner, { tier: 1, jurisdiction: IT, expiry: NOW + 100n, personTag: 77n });
   const tree = await BbTree.create(bb);
   const { inputs } = await buildSpend(bb, tree, {
     secret, asset: 7n, credential, taxKey: tax.pub, amlKey: aml.pub, inputs: [], publicIn: 4_200n,
@@ -68,6 +68,40 @@ test('protocol hashes: pure JS == bb.js', async () => {
   assert.equal(o, await bb.ownerPubkey(s));
   assert.equal(core.noteCommitment(5n, o, 9n, 11n), await bb.noteCommitment(5n, o, 9n, 11n));
   assert.equal(core.nullifier(s, 3n, 4n), await bb.nullifier(s, 3n, 4n));
-  const c = { tier: 2, jurisdiction: 0, expiry: 99n };
-  assert.equal(core.credentialHash(o, c), await bb.credentialHash(o, c));
+  const c = { tier: 2, jurisdiction: 0, expiry: 99n, personTag: 5n };
+  assert.equal(core.credentialHashV2(o, c), await bb.credentialHash(o, c));
+});
+
+test('DKG without dealer + DLEQ: 2 of 3 decrypt the REAL circuit, a fake share is rejected', async () => {
+  const deals = [1, 2, 3].map(() => core.dkgDeal(2, 3));
+  const members = [1, 2, 3].map((j) => core.dkgFinalize(j, deals));
+  const committeeKey = core.dkgPublicKey(deals);
+  const tax = core.auditorKeypair();
+  const secret = core.randomField();
+  const owner = core.ownerPubkey(secret);
+  const credential = await bb.issueCredential(ISSUER_KEY, owner, { tier: 1, jurisdiction: IT, expiry: NOW + 100n, personTag: 9n });
+  const tree = await BbTree.create(bb);
+  const { inputs } = await buildSpend(bb, tree, {
+    secret, asset: 7n, credential, taxKey: tax.pub, amlKey: committeeKey, inputs: [], publicIn: 4_200n,
+    outputs: [{ amount: 4_200n, owner, blinding: core.randomField() }, { amount: 0n, owner, blinding: core.randomField() }],
+  });
+  const [, , amlEph, amlCt] = (await execute('spend', inputs)).returnValue;
+  const eph = { x: BigInt(amlEph.x), y: BigInt(amlEph.y) };
+  const pubs = new Map(members.map((m) => [String(m.index), m.pub]));
+  const parts = [members[0], members[2]].map((m) => core.partialDecryptWithProof(m, eph));
+  assert.equal(core.thresholdDecryptVerified(parts, pubs, eph, amlCt)[0], owner);
+  const fake = { ...parts[1], point: core.scalarMul(eph, 12345n) };
+  assert.throws(() => core.thresholdDecryptVerified([parts[0], fake], pubs, eph, amlCt), /invalid partial share/);
+  // a dealer cheating on a share is caught by the Feldman check
+  const bad = core.dkgDeal(2, 3);
+  bad.shares.set('2', bad.shares.get('2') + 1n);
+  assert.throws(() => core.dkgFinalize(2, [deals[0], bad]), /invalid share/);
+});
+
+test('Schnorr: signature valid only for the right message and key', () => {
+  const sk = core.randomScalar(core.Q), pk = core.scalarMul(core.G, sk);
+  const sig = core.schnorrSign(sk, 42n);
+  assert.ok(core.schnorrVerify(pk, 42n, sig));
+  assert.ok(!core.schnorrVerify(pk, 43n, sig));
+  assert.ok(!core.schnorrVerify(core.scalarMul(core.G, 7n), 42n, sig));
 });

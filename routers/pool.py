@@ -42,6 +42,7 @@ class PoolProof(BaseModel):
     taxCt: List[str] = Field(min_length=4, max_length=4)
     amlEph: Point
     amlCt: List[str] = Field(min_length=8, max_length=8)
+    rateNullifier: str
 
 
 class ExtData(BaseModel):
@@ -74,8 +75,12 @@ def pool_credential(req: CredentialRequest, current_user: Dict = Depends(_get_cu
     profile = db.query(db_models.ComplianceProfile).filter_by(user_id=uid).first()
     if profile is None or not profile.kyc_verified:
         raise HTTPException(status_code=403, detail="KYC not verified")
+    user = db.get(db_models.User, uid)
+    if not user.pool_person_tag:
+        user.pool_person_tag = pool_service.new_person_tag()
+        db.commit()
     try:
-        cred = pool_service.issue_credential(req.pseudonym, profile.kyc_tier, profile.kyc_country)
+        cred = pool_service.issue_credential(req.pseudonym, profile.kyc_tier, profile.kyc_country, user.pool_person_tag)
     except pool_service.PoolError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - issuer key not configured

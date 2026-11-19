@@ -6,9 +6,9 @@
 //!  1. Ownership: the input notes exist in the tree (`root`) and belong to whoever
 //!     knows `spending_secret`; their nullifiers are correct (no double spend).
 //!  2. Conservation: in0 + in1 + public_in == out0 + out1 + public_out.
-//!  3. Compliance: the sender holds a valid, unexpired KYC credential signed by a
-//!     registered issuer, in an allowed jurisdiction, and the amount moved
-//!     does not exceed its tier's limit.
+//!  3. Compliance: the sender holds a valid, unexpired KYC credential signed (Schnorr-Grumpkin)
+//!     by a registered issuer, in an allowed jurisdiction, and the amount moved
+//!     does not exceed its tier's limit; at most max_tx_per_epoch transactions a day per PERSON.
 //!  4. Graduated disclosure: two verifiable ciphertexts are produced
 //!       - TAX  (level 2): who pays and how much, without the counterparty;
 //!       - AML  (level 3): full transaction detail.
@@ -17,7 +17,8 @@
 //!
 //! Convention: out[0] = payment, out[1] = change (always back to the sender).
 
-use aegis_lib::{TREE_DEPTH};
+use aegis_lib::{DOMAIN_RATE, EPOCH_SECONDS, TREE_DEPTH};
+use aegis_lib::hash::poseidon2;
 use aegis_lib::note::{note_commitment, nullifier, owner_pubkey};
 use aegis_lib::merkle::compute_root;
 use aegis_lib::credential::{Credential, verify_credential};
@@ -36,8 +37,8 @@ fn main(
     now: pub u64,
     allowed_jurisdictions: pub u64,
     tier_limits: pub [u64; 4],
-    issuer_pk_x: pub [u8; 32],
-    issuer_pk_y: pub [u8; 32],
+    max_tx_per_epoch: pub u32,
+    issuer_key: pub EmbeddedCurvePoint,
     tax_key: pub EmbeddedCurvePoint,
     aml_key: pub EmbeddedCurvePoint,
     // ---- private witness ----
@@ -50,9 +51,10 @@ fn main(
     out_owners: [Field; 2],
     out_blindings: [Field; 2],
     credential: Credential,
+    rate_slot: u32,
     tax_randomness: Field,
     aml_randomness: Field,
-) -> pub (EmbeddedCurvePoint, [Field; 4], EmbeddedCurvePoint, [Field; 8]) {
+) -> pub (EmbeddedCurvePoint, [Field; 4], EmbeddedCurvePoint, [Field; 8], Field) {
     let owner = owner_pubkey(spending_secret);
 
     // 1. Input notes: existence + nullifiers. Notes with amount 0 are "dummies"
@@ -81,7 +83,7 @@ fn main(
     assert(total_in == total_out, "value not conserved");
 
     // 3. Compliance.
-    let cred_hash = verify_credential(owner, credential, issuer_pk_x, issuer_pk_y, now, allowed_jurisdictions);
+    let cred_hash = verify_credential(owner, credential, issuer_key, now, allowed_jurisdictions);
     let moved = out_amounts[0] as u128 + public_out as u128;
     assert(moved <= tier_limits[credential.tier as u32] as u128, "amount above tier limit");
 
@@ -108,5 +110,13 @@ fn main(
         aml_key,
         aml_randomness,
     );
-    (tax_eph, tax_ct, aml_eph, aml_ct)
+    // 5. Daily rate limit PER PERSON (not per pseudonym): one rate nullifier per transaction,
+    //    slot < max_tx_per_epoch. The contract refuses an already used rate nullifier, so the same person
+    //    makes at most max_tx_per_epoch transactions a day, however many pseudonyms they have.
+    //    Combined with the per-tx tier limit, it caps the daily volume.
+    assert(rate_slot < max_tx_per_epoch, "rate slot out of range");
+    let epoch = now / EPOCH_SECONDS;
+    let rate_nullifier = poseidon2([DOMAIN_RATE, credential.person_tag, epoch as Field, rate_slot as Field]);
+
+    (tax_eph, tax_ct, aml_eph, aml_ct, rate_nullifier)
 }

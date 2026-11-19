@@ -530,3 +530,61 @@ class NoirCircuitInterface:
 
 # Module-level singleton
 noir_interface = NoirCircuitInterface()
+
+
+# ---------------------------------------------------------------------------
+# Grumpkin (y^2 = x^3 - 17 over the BN254 scalar field) and Schnorr signatures
+# Same scheme as noir_circuits/aegis_lib/src/credential.nr and sdk/aegis-core.mjs.
+# ---------------------------------------------------------------------------
+
+GRUMPKIN_ORDER = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+GRUMPKIN_G = (1, 0x0000000000000002CF135E7506A45D632D270D45F1181294833FC48D823F272C)
+DOMAIN_SCHNORR = 7
+
+
+def grumpkin_add(a, b):
+    p = FIELD_PRIME
+    if a is None:
+        return b
+    if b is None:
+        return a
+    if a[0] == b[0]:
+        if (a[1] + b[1]) % p == 0:
+            return None
+        lam = 3 * a[0] * a[0] * pow(2 * a[1], -1, p) % p
+    else:
+        lam = (b[1] - a[1]) * pow(b[0] - a[0], -1, p) % p
+    x = (lam * lam - a[0] - b[0]) % p
+    return (x, (lam * (a[0] - x) - a[1]) % p)
+
+
+def grumpkin_mul(point, k: int):
+    k %= GRUMPKIN_ORDER
+    acc, add = None, point
+    while k:
+        if k & 1:
+            acc = grumpkin_add(acc, add)
+        add = grumpkin_add(add, add)
+        k >>= 1
+    return acc
+
+
+def grumpkin_on_curve(pt) -> bool:
+    return pt is not None and (pt[1] * pt[1] - (pt[0] ** 3 - 17)) % FIELD_PRIME == 0
+
+
+def schnorr_sign(secret: int, msg: int) -> dict:
+    """Schnorr on Grumpkin: R = k·G, e = Poseidon2(7, R, PK, msg), s = k + e·sk (mod order)."""
+    k = int.from_bytes(os.urandom(48), "big") % (GRUMPKIN_ORDER - 1) + 1
+    pub = grumpkin_mul(GRUMPKIN_G, secret)
+    r = grumpkin_mul(GRUMPKIN_G, k)
+    e = poseidon2_hash([DOMAIN_SCHNORR, r[0], r[1], pub[0], pub[1], msg])
+    s = (k + e * secret) % GRUMPKIN_ORDER
+    return {"r": r, "s": s, "s_lo": s & ((1 << 128) - 1), "s_hi": s >> 128}
+
+
+def schnorr_verify(pub, msg: int, r, s: int) -> bool:
+    if not (grumpkin_on_curve(pub) and grumpkin_on_curve(r)):
+        return False
+    e = poseidon2_hash([DOMAIN_SCHNORR, r[0], r[1], pub[0], pub[1], msg])
+    return grumpkin_mul(GRUMPKIN_G, s) == grumpkin_add(r, grumpkin_mul(pub, e))
