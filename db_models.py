@@ -7,8 +7,11 @@ db_models.py - SQLAlchemy ORM models for AEGIS Protocol
 from datetime import datetime
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer,
-    JSON, String, Text, UniqueConstraint,
+    JSON, Numeric, String, Text, UniqueConstraint,
 )
+
+# Money: exact decimal (never float). 18 digits, 2 decimal places.
+Money = Numeric(18, 2, asdecimal=True)
 from sqlalchemy.orm import relationship
 
 from db import Base
@@ -49,7 +52,7 @@ class Wallet(Base):
     address = Column(String(42), unique=True, nullable=False, index=True)
     # LEGACY: the server no longer stores private keys (signing happens on the device).
     encrypted_key = Column(Text, nullable=True)
-    balance_eurc = Column(Float, default=0.0, nullable=False)
+    balance_eurc = Column(Money, default=0, nullable=False)
     nonce = Column(Integer, default=0, nullable=False)
     is_frozen = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -67,7 +70,7 @@ class Transaction(Base):
     tx_hash = Column(String(66), unique=True, nullable=False, index=True)
     sender_address = Column(String(42), ForeignKey("wallets.address"), nullable=False)
     recipient_address = Column(String(42), nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Money, nullable=False)
     status = Column(String(20), default="pending", nullable=False)
     proof_hash = Column(String(66), nullable=True)
     requires_zk_proof = Column(Boolean, default=False, nullable=False)
@@ -92,8 +95,8 @@ class ComplianceProfile(Base):
     kyc_provider_ref = Column(String(255), nullable=True)
     kyc_country = Column(String(2), nullable=True)  # ISO 3166-1 alpha-2, from the verification
     aml_screened = Column(Boolean, default=False, nullable=False)
-    daily_limit = Column(Float, default=10000.0, nullable=False)
-    single_tx_limit = Column(Float, default=5000.0, nullable=False)
+    daily_limit = Column(Money, default=10000, nullable=False)
+    single_tx_limit = Column(Money, default=5000, nullable=False)
     risk_level = Column(String(20), default="low", nullable=False)
     last_risk_assessment = Column(DateTime, nullable=True)
     last_kyc_at = Column(DateTime, nullable=True)
@@ -140,7 +143,7 @@ class ScheduledPayment(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     from_address = Column(String(42), nullable=False)
     to_address = Column(String(42), nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Money, nullable=False)
     scheduled_at = Column(DateTime, nullable=False)
     is_recurring = Column(Boolean, default=False, nullable=False)
     frequency = Column(String(20), nullable=True)
@@ -277,3 +280,24 @@ class WalletLinkChallenge(Base):
     nonce = Column(String(64), unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     used = Column(Boolean, default=False, nullable=False)
+
+
+class BankOperation(Base):
+    """EUR deposits and withdrawals: one state in the DB for all workers, idempotent."""
+
+    __tablename__ = "bank_operations"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "idempotency_key", name="uq_bank_op_idempotency"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False)  # deposit | withdrawal
+    amount = Column(Money, nullable=False)
+    wallet_address = Column(String(42), nullable=False)
+    status = Column(String(30), nullable=False)
+    reference = Column(String(32), unique=True, nullable=False, index=True)
+    idempotency_key = Column(String(128), nullable=True)
+    iban_masked = Column(String(12), nullable=True)
+    payout_ref_hash = Column(String(66), nullable=True)
+    bank_tx_id = Column(String(128), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

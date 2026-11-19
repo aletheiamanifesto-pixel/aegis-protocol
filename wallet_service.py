@@ -103,12 +103,9 @@ def get_balance(address: str) -> float:
 
     Returns balance in EUR (float). Falls back to 0.0 if blockchain not available.
     """
-    try:
-        from transaction_processor import TransactionProcessor
-        tp = TransactionProcessor()
-        return tp.get_balance(address)
-    except Exception:
-        return 0.0
+    from transaction_processor import TransactionProcessor
+
+    return TransactionProcessor().get_balance(address)
 
 
 def send_payment(

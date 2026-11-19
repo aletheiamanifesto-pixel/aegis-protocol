@@ -1,162 +1,138 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Tests for banking_operations.py"""
+"""banking_operations: state in the DB, Decimal, idempotency, deposits only on bank confirmation."""
+
+import hashlib
+import hmac
+import json
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 import pytest
-from datetime import datetime, timedelta
-from banking_operations import (
-    deposit_eur,
-    withdraw_eur,
-    get_account_statement,
-    schedule_payment,
-    recurring_payment,
-    get_reserve_status,
-    BankingError,
-)
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+import banking_operations as bo
+import db_models
+
+IBAN = "IT60X0542811101000000123456"  # valid IBAN (example)
+WALLET = "0x" + "ab" * 20
 
 
-@pytest.fixture(autouse=True)
-def reset_banking_state():
-    """Reset banking state between tests."""
-    import banking_operations as bo
-    bo._total_deposits = 0.0
-    bo._total_withdrawals = 0.0
-    bo._scheduled_payments.clear()
-    yield
-    bo._total_deposits = 0.0
-    bo._total_withdrawals = 0.0
-    bo._scheduled_payments.clear()
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db_models.Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    s.add(db_models.User(id=1, username="u1", email="u1@example.com", hashed_password="x"))
+    s.commit()
+    yield s
+    s.close()
+
+
+class TestMoney:
+    def test_no_float_rounding(self):
+        assert bo.to_money("0.1") + bo.to_money("0.2") == Decimal("0.30")
+
+    @pytest.mark.parametrize("bad", ["1.001", "NaN", "inf", "abc"])
+    def test_invalid_amounts(self, bad):
+        with pytest.raises(bo.BankingError):
+            bo.to_money(bad)
 
 
 class TestDeposit:
-    def test_basic_deposit(self):
-        result = deposit_eur("user1", 1000.0, "0xwallet")
-        assert result["status"] == "completed"
-        assert result["amount_eur"] == 1000.0
-        assert result["aegis_eur_minted"] == 1000.0
-        assert "operation_id" in result
-        assert "tx_reference" in result
+    def test_deposit_is_not_completed_without_bank(self, db):
+        r = bo.create_deposit(db, 1, "1000.00", WALLET)
+        assert r["status"] == "awaiting_funds"
+        assert r["reference"].startswith("DEP-")
+        assert "SEPA" in r["instructions"]
+        assert bo.get_reserve_status(db)["total_deposits_eur"] == "0.00"
 
-    def test_deposit_updates_reserve(self):
-        deposit_eur("user1", 500.0, "0xwallet")
-        status = get_reserve_status()
-        assert status["total_deposits_eur"] == 500.0
+    def test_confirmation_completes_and_is_idempotent(self, db):
+        ref = bo.create_deposit(db, 1, "250.10", WALLET)["reference"]
+        assert bo.confirm_deposit(db, ref, "250.10", "BANK-1")["status"] == "completed"
+        assert bo.confirm_deposit(db, ref, "250.10", "BANK-1")["status"] == "completed"
+        assert bo.get_reserve_status(db)["total_deposits_eur"] == "250.10"
 
-    def test_zero_deposit_raises(self):
-        with pytest.raises(BankingError):
-            deposit_eur("user1", 0, "0xwallet")
+    def test_wrong_amount_goes_to_review(self, db):
+        ref = bo.create_deposit(db, 1, "100.00", WALLET)["reference"]
+        with pytest.raises(bo.BankingError):
+            bo.confirm_deposit(db, ref, "99.99", "BANK-2")
+        assert bo.get_reserve_status(db)["total_deposits_eur"] == "0.00"
 
-    def test_negative_deposit_raises(self):
-        with pytest.raises(BankingError):
-            deposit_eur("user1", -100.0, "0xwallet")
+    def test_retry_with_same_idempotency_key_does_not_duplicate(self, db):
+        a = bo.create_deposit(db, 1, "10.00", WALLET, idempotency_key="k-1")
+        b = bo.create_deposit(db, 1, "10.00", WALLET, idempotency_key="k-1")
+        assert a["operation_id"] == b["operation_id"]
+        assert db.query(db_models.BankOperation).count() == 1
 
-    def test_deposit_over_limit_raises(self):
-        with pytest.raises(BankingError):
-            deposit_eur("user1", 1_000_001.0, "0xwallet")
-
-    def test_tx_reference_format(self):
-        result = deposit_eur("user1", 100.0, "0xwallet")
-        assert result["tx_reference"].startswith("DEP-")
-
-
-class TestWithdraw:
-    def test_basic_withdraw(self):
-        result = withdraw_eur("user1", 500.0, "0xwallet", "DE89370400440532013000")
-        assert result["status"] == "processing"
-        assert result["amount_aegis_eur"] == 500.0
-        assert "destination_iban" in result
-        assert "****" in result["destination_iban"]
-
-    def test_zero_withdraw_raises(self):
-        with pytest.raises(BankingError):
-            withdraw_eur("user1", 0, "0xwallet", "DE89370400440532013000")
-
-    def test_invalid_iban_raises(self):
-        with pytest.raises(BankingError):
-            withdraw_eur("user1", 100.0, "0xwallet", "INVALID")
-
-    def test_iban_masked_in_response(self):
-        result = withdraw_eur("user1", 100.0, "0xwallet", "DE89370400440532013000")
-        assert "****" in result["destination_iban"]
-
-    def test_tx_reference_format(self):
-        result = withdraw_eur("user1", 100.0, "0xwallet", "DE89370400440532013000")
-        assert result["tx_reference"].startswith("WIT-")
+    @pytest.mark.parametrize("amount", ["0", "-5", "1000000.01"])
+    def test_limits(self, db, amount):
+        with pytest.raises(bo.BankingError):
+            bo.create_deposit(db, 1, amount, WALLET)
 
 
-class TestAccountStatement:
-    def test_basic_statement(self):
-        from_date = datetime.utcnow() - timedelta(days=30)
-        to_date = datetime.utcnow()
-        result = get_account_statement("user1", from_date, to_date)
-        assert "statement_id" in result
-        assert result["statement_id"].startswith("STMT-")
-        assert "summary" in result
+class TestWithdrawal:
+    def test_withdrawal_binds_escrow_to_iban_without_putting_it_on_chain(self, db):
+        r = bo.create_withdrawal(db, 1, "50.00", WALLET, IBAN)
+        assert r["status"] == "awaiting_escrow"
+        assert r["destination_iban"] == "IT****56"
+        assert r["payout_ref_hash"].startswith("0x") and IBAN not in json.dumps(r)
 
-    def test_statement_with_transactions(self):
-        from_date = datetime.utcnow() - timedelta(days=7)
-        to_date = datetime.utcnow()
-        txns = [
-            {"amount": 100.0, "direction": "in"},
-            {"amount": 50.0, "direction": "out"},
-        ]
-        result = get_account_statement("user1", from_date, to_date, txns)
-        assert result["summary"]["total_incoming"] == 100.0
-        assert result["summary"]["total_outgoing"] == 50.0
-        assert result["summary"]["net_change"] == 50.0
-
-    def test_invalid_date_range_raises(self):
-        with pytest.raises(BankingError):
-            get_account_statement(
-                "user1",
-                datetime.utcnow(),
-                datetime.utcnow() - timedelta(days=1),
-            )
+    def test_invalid_iban_rejected(self, db):
+        with pytest.raises(bo.BankingError):
+            bo.create_withdrawal(db, 1, "50.00", WALLET, "IT60X0542811101000000123457")  # wrong checksum
 
 
-class TestSchedulePayment:
-    def test_schedule_payment(self):
-        future = datetime.utcnow() + timedelta(hours=1)
-        result = schedule_payment("user1", "0xfrom", "0xto", 100.0, future)
-        assert result["status"] == "pending"
-        assert result["is_recurring"] is False
-        assert "schedule_id" in result
+class TestStatementAndSchedules:
+    def test_statement_from_db(self, db):
+        ref = bo.create_deposit(db, 1, "100.00", WALLET)["reference"]
+        bo.confirm_deposit(db, ref, "100.00", "B")
+        st = bo.get_account_statement(db, 1, datetime.utcnow() - timedelta(days=1), datetime.utcnow() + timedelta(days=1))
+        assert st["summary"]["total_in"] == "100.00" and len(st["operations"]) == 1
 
-    def test_past_date_raises(self):
-        with pytest.raises(BankingError):
-            schedule_payment("user1", "0xfrom", "0xto", 100.0, datetime.utcnow() - timedelta(hours=1))
-
-    def test_zero_amount_raises(self):
-        with pytest.raises(BankingError):
-            schedule_payment("user1", "0xfrom", "0xto", 0, datetime.utcnow() + timedelta(hours=1))
+    def test_schedule_and_recurring_persisted(self, db):
+        bo.schedule_payment(db, 1, WALLET, "0x" + "cd" * 20, "5.00", datetime.utcnow() + timedelta(days=1))
+        bo.recurring_payment(db, 1, WALLET, "0x" + "cd" * 20, "7.50", "monthly")
+        assert db.query(db_models.ScheduledPayment).count() == 2
+        with pytest.raises(bo.BankingError):
+            bo.recurring_payment(db, 1, WALLET, "0x" + "cd" * 20, "7.50", "hourly")
 
 
-class TestRecurringPayment:
-    def test_monthly_recurring(self):
-        result = recurring_payment("user1", "0xfrom", "0xto", 50.0, "monthly")
-        assert result["is_recurring"] is True
-        assert result["frequency"] == "monthly"
-        assert result["status"] == "active"
+class TestBankingApi:
+    """Via the API: signed bank webhook, no token issued without confirmation."""
 
-    def test_invalid_frequency_raises(self):
-        with pytest.raises(BankingError):
-            recurring_payment("user1", "0xfrom", "0xto", 50.0, "hourly")
+    def test_webhook_signature_and_flow(self, monkeypatch):
+        from tests.test_main_app import _my_wallet, _register_and_login, client  # noqa: F401
+        from fastapi.testclient import TestClient
 
-    def test_zero_amount_raises(self):
-        with pytest.raises(BankingError):
-            recurring_payment("user1", "0xfrom", "0xto", 0, "weekly")
+        from main_app import app
 
+        c = TestClient(app)
+        h = _register_and_login(c, "_bank_api")
+        addr = _my_wallet(c, h)
+        r = c.post("/banking/deposit", json={"amount": "12.34", "wallet_address": addr}, headers={**h, "Idempotency-Key": "abc"})
+        assert r.status_code == 201, r.text
+        dep = r.json()
+        assert c.post("/banking/deposit", json={"amount": "12.34", "wallet_address": addr},
+                      headers={**h, "Idempotency-Key": "abc"}).json()["operation_id"] == dep["operation_id"]
 
-class TestReserveStatus:
-    def test_initial_reserve_status(self):
-        status = get_reserve_status()
-        assert status["is_fully_backed"]
-        assert status["status"] == "healthy"
-        assert "last_audit_hash" in status
-        assert status["last_audit_hash"].startswith("0x")
+        secret = "s" * 40
+        monkeypatch.setenv("BANK_WEBHOOK_SECRET", secret)
+        body = json.dumps({"reference": dep["reference"], "amount": "12.34", "bank_tx_id": "SEPA-9"}).encode()
+        assert c.post("/banking/webhook/deposit", content=body, headers={"X-Bank-Signature": "0" * 64}).status_code == 401
+        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        ok = c.post("/banking/webhook/deposit", content=body, headers={"X-Bank-Signature": sig})
+        assert ok.status_code == 200 and ok.json()["status"] == "completed"
 
-    def test_reserve_after_deposit(self):
-        deposit_eur("user1", 1000.0, "0xwallet")
-        status = get_reserve_status()
-        assert status["total_deposits_eur"] == 1000.0
-        assert status["is_fully_backed"]
+    def test_float_with_too_many_decimals_rejected(self):
+        from fastapi.testclient import TestClient
+
+        from main_app import app
+        from tests.test_main_app import _my_wallet, _register_and_login
+
+        c = TestClient(app)
+        h = _register_and_login(c, "_bank_dec")
+        addr = _my_wallet(c, h)
+        assert c.post("/banking/deposit", json={"amount": "1.005", "wallet_address": addr}, headers=h).status_code == 422

@@ -192,12 +192,12 @@ Bootstrap the first admin with `python scripts/create_admin.py <username>`.
 ### Banking
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/banking/deposit` | Deposit EUR → mint AEGIS-EUR tokens |
+| `POST` | `/banking/deposit` | Deposit instruction (`awaiting_funds`, unique SEPA reference; `Idempotency-Key` header). Completed only by `/banking/webhook/deposit` (HMAC, `BANK_WEBHOOK_SECRET`) or `/banking/deposits/confirm` (compliance) |
 | `POST` | `/banking/withdraw` | Withdraw EUR (requires active 2FA + code). On-chain: the user escrows tokens with `AegisVault.requestWithdrawal`, signers can only burn that escrow after paying (`completeWithdrawal`), or refund; after 7 days the user can take them back |
 | `GET`  | `/banking/statement` | Account statement |
 | `POST` | `/banking/schedule-payment` | Schedule a one-time future payment |
 | `POST` | `/banking/recurring-payment` | Set up recurring payment |
-| `GET`  | `/banking/reserve-status` | On-chain reserve ratio (MiCA Art. 36) |
+| `GET`  | `/banking/reserve-status` | Bookkeeping totals of bank-confirmed operations (proof of reserve is `AegisVault.attestReserve`) |
 
 ### Advanced
 | Method | Path | Description |

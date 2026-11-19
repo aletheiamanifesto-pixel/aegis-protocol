@@ -119,7 +119,11 @@ class ReserveAttestor:
         try:
             return self._chain_attestation()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("ReserveAttestor: chain read failed, using dev defaults. Error: %s", exc)
+            # A reserve attestation must NEVER silently fall back to made-up numbers.
+            from aegis_env import require_mocks
+
+            logger.error("ReserveAttestor: chain read failed: %s", exc)
+            require_mocks("reserve attestation (chain unreachable)")
             return self._dev_attestation()
 
     # ------------------------------------------------------------------
