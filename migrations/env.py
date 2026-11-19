@@ -1,5 +1,4 @@
 """Alembic environment: uses DATABASE_URL and the AEGIS models' metadata."""
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -7,13 +6,13 @@ from sqlalchemy import engine_from_config, pool
 
 import db_models  # noqa: F401  - registers the main tables
 import proofmint.models  # noqa: F401  - registers the ProofMint tables
-from db import Base
+from db import DATABASE_URL, Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-url = os.getenv("DATABASE_URL", "postgresql://aegis:aegis@localhost:5432/aegis_db")
+url = DATABASE_URL  # already normalized to the psycopg2 driver
 config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 target_metadata = Base.metadata
 

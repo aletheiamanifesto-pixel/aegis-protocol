@@ -15,6 +15,11 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://aegis:aegis@localhost:5432/aegis_db",
 )
+# SQLAlchemy 2.1 maps a bare "postgresql://" to psycopg 3; this project ships psycopg2.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len("postgresql://"):]
+elif DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len("postgres://"):]
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
