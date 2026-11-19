@@ -214,3 +214,16 @@ class LoginAttempt(Base):
     ip_address = Column(String(45), nullable=True, index=True)
     success = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class PersistentState(Base):
+    """Encrypted state of the viewing-key / regulatory-request managers (see viewing_keys/persistence.py)."""
+
+    __tablename__ = "aegis_state"
+    __table_args__ = (UniqueConstraint("namespace", "key", name="uq_aegis_state_ns_key"),)
+
+    id = Column(Integer, primary_key=True)
+    namespace = Column(String(64), nullable=False, index=True)
+    key = Column(String(128), nullable=False)
+    value = Column(Text, nullable=False)  # Fernet token of the JSON record
+    updated_at = Column(Float, nullable=False)

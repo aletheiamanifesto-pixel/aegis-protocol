@@ -16,3 +16,4 @@ httpx==0.25.2
 qrcode[pil]==7.4.2
 mnemonic==0.21
 anthropic>=2.4,<3
+alembic>=1.13,<2

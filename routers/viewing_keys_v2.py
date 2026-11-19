@@ -45,27 +45,38 @@ try:
 except ImportError:
     _vk_v2_available = False
 
-# Module-level singletons (stateful in-process store; swap for DB-backed impl in prod)
-_vk_manager: "ViewingKeyManagerV2 | None" = None
-_regulatory_manager: "RegulatoryAccessManager | None" = None
+# Managers are created PER REQUEST on the database session: state survives restarts and
+# is shared across instances. Without a database, in-memory only in development.
+_dev_vk_manager: "ViewingKeyManagerV2 | None" = None
+_dev_regulatory_manager: "RegulatoryAccessManager | None" = None
 
 
-def _get_vk_manager() -> "ViewingKeyManagerV2":
-    global _vk_manager
-    if _vk_manager is None:
-        if not _vk_v2_available:
-            raise HTTPException(status_code=503, detail="Viewing Keys V2 service not available")
-        _vk_manager = ViewingKeyManagerV2()
-    return _vk_manager
+def get_vk_manager(db=Depends(get_db)) -> "ViewingKeyManagerV2":
+    global _dev_vk_manager
+    if not _vk_v2_available:
+        raise HTTPException(status_code=503, detail="Viewing Keys V2 service not available")
+    if db is not None:
+        from viewing_keys.persistence import persistent_vk_manager
+
+        return persistent_vk_manager(db)
+    from aegis_env import mocks_allowed
+
+    if not mocks_allowed():
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    if _dev_vk_manager is None:
+        _dev_vk_manager = ViewingKeyManagerV2()
+    return _dev_vk_manager
 
 
-def _get_regulatory_manager() -> "RegulatoryAccessManager":
-    global _regulatory_manager
-    if _regulatory_manager is None:
-        if not _vk_v2_available:
-            raise HTTPException(status_code=503, detail="Regulatory flow service not available")
-        _regulatory_manager = RegulatoryAccessManager(_get_vk_manager())
-    return _regulatory_manager
+def get_regulatory_manager(db=Depends(get_db), vk=Depends(get_vk_manager)) -> "RegulatoryAccessManager":
+    global _dev_regulatory_manager
+    if db is not None:
+        from viewing_keys.persistence import persistent_regulatory_manager
+
+        return persistent_regulatory_manager(db, vk)
+    if _dev_regulatory_manager is None:
+        _dev_regulatory_manager = RegulatoryAccessManager(vk)
+    return _dev_regulatory_manager
 
 
 router = APIRouter(tags=["viewing-keys-v2"])
@@ -75,26 +86,25 @@ router = APIRouter(tags=["viewing-keys-v2"])
 # Authorization helpers
 # ---------------------------------------------------------------------------
 
-def _key_address(key_id: str) -> str:
-    info = _get_vk_manager().get_key_info(key_id)
+def _key_address(mgr, key_id: str) -> str:
+    info = mgr.get_key_info(key_id)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Key {key_id} not found")
     return info["address"]
 
 
-def _authority_holds_key(user: Dict, key_id: str) -> bool:
+def _authority_holds_key(rm, user: Dict, key_id: str) -> bool:
     """An authority may use a key only if it was issued for ITS request, once approved."""
     if not has_role(user, "authority"):
         return False
-    rm = _get_regulatory_manager()
-    for req in rm._requests.values():  # noqa: SLF001 - in-memory store (persisted in a later step)
+    for req in rm._requests.values():  # noqa: SLF001
         if req.viewing_key_id == key_id and req.requester_id == user["user_id"] and req.status.value == "approved":
             return True
     return False
 
 
-def _request_or_404(request_id: str) -> Dict:
-    detail = _get_regulatory_manager().get_request(request_id)
+def _request_or_404(rm, request_id: str) -> Dict:
+    detail = rm.get_request(request_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Request not found")
     return detail
@@ -109,10 +119,11 @@ def vk_v2_create(
     req: ViewingKeyV2CreateRequest,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Create a master viewing key for a wallet address."""
     require_owner(db, current_user, req.address)
-    mgr = _get_vk_manager()
     try:
         result = mgr.create_master_key(req.address)
     except ViewingKeyError as exc:
@@ -125,10 +136,11 @@ def vk_v2_derive(
     req: ViewingKeyV2DeriveRequest,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Derive a sub-key from a master key with the given scope and optional expiry."""
-    require_owner(db, current_user, _key_address(req.master_key_id))
-    mgr = _get_vk_manager()
+    require_owner(db, current_user, _key_address(mgr, req.master_key_id))
     try:
         scope_enum = KeyScope(req.scope)
     except ValueError:
@@ -151,14 +163,15 @@ def vk_v2_decrypt(
     req: ViewingKeyV2DecryptRequest,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Decrypt an encrypted transaction using the specified key.
 
     The response is scope-filtered: only fields allowed by the key's scope are returned.
     """
-    if not (owns_address(db, current_user, _key_address(req.key_id)) or _authority_holds_key(current_user, req.key_id)):
+    if not (owns_address(db, current_user, _key_address(mgr, req.key_id)) or _authority_holds_key(rm, current_user, req.key_id)):
         raise HTTPException(status_code=403, detail="Key not usable by this user")
-    mgr = _get_vk_manager()
     encrypted_data = {
         "ciphertext": req.ciphertext,
         "nonce": req.nonce,
@@ -176,10 +189,11 @@ def vk_v2_revoke(
     key_id: str,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Revoke a viewing key. If it is a master key, all derived sub-keys are also revoked."""
-    require_owner(db, current_user, _key_address(key_id))
-    mgr = _get_vk_manager()
+    require_owner(db, current_user, _key_address(mgr, key_id))
     try:
         result = mgr.revoke_key(key_id)
     except ViewingKeyError as exc:
@@ -192,13 +206,14 @@ def vk_v2_info(
     key_id: str,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Return metadata for a key (the secret is never exposed)."""
-    mgr = _get_vk_manager()
     info = mgr.get_key_info(key_id)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Key {key_id} not found")
-    if not (owns_address(db, current_user, info["address"]) or _authority_holds_key(current_user, key_id)
+    if not (owns_address(db, current_user, info["address"]) or _authority_holds_key(rm, current_user, key_id)
             or has_role(current_user, "compliance", "admin")):
         raise HTTPException(status_code=403, detail="Key not visible to this user")
     return info
@@ -209,10 +224,11 @@ def vk_v2_audit(
     address: str,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Return the audit trail for all viewing key operations on an address."""
     require_owner(db, current_user, address, also_roles=("compliance", "admin"))
-    mgr = _get_vk_manager()
     trail = mgr.get_audit_trail(address)
     return {"address": address, "audit_trail": trail}
 
@@ -225,13 +241,13 @@ def vk_v2_audit(
 def regulatory_request_access(
     req: RegulatoryRequestCreate,
     current_user: Dict = Depends(require_roles("authority")),
+    rm=Depends(get_regulatory_manager),
 ):
     """Agency submits a regulatory access request for a specific transaction.
 
     The request is created with status PENDING_USER_APPROVAL.
     The wallet owner must approve or deny the request separately.
     """
-    rm = _get_regulatory_manager()
     try:
         result = rm.create_request(
             # Who is requesting comes from the account, NEVER from the body: you cannot claim to be the UIF.
@@ -254,10 +270,11 @@ def regulatory_list_requests(
     owner_address: str,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """List all pending regulatory access requests for a wallet owner."""
     require_owner(db, current_user, owner_address, also_roles=("compliance", "admin"))
-    rm = _get_regulatory_manager()
     requests = rm.list_pending_requests(owner_address)
     return {"owner_address": owner_address, "pending_requests": requests}
 
@@ -268,6 +285,8 @@ def regulatory_approve_request(
     req: RegulatoryRequestApprove,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Owner approves a regulatory access request.
 
@@ -275,11 +294,10 @@ def regulatory_approve_request(
     and a duration equal to or shorter than requested.
     """
     # Only the real owner of the address in the request decides (not whoever writes it in the body).
-    detail = _request_or_404(request_id)
+    detail = _request_or_404(rm, request_id)
     if req.owner_address.lower() != detail["owner_address"].lower():
         raise HTTPException(status_code=403, detail="owner_address does not match the request")
     require_owner(db, current_user, detail["owner_address"])
-    rm = _get_regulatory_manager()
     try:
         result = rm.approve_request(
             request_id=request_id,
@@ -298,14 +316,15 @@ def regulatory_deny_request(
     req: RegulatoryRequestDeny,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Owner denies a regulatory access request."""
     # Only the real owner of the address in the request decides (not whoever writes it in the body).
-    detail = _request_or_404(request_id)
+    detail = _request_or_404(rm, request_id)
     if req.owner_address.lower() != detail["owner_address"].lower():
         raise HTTPException(status_code=403, detail="owner_address does not match the request")
     require_owner(db, current_user, detail["owner_address"])
-    rm = _get_regulatory_manager()
     try:
         result = rm.deny_request(
             request_id=request_id,
@@ -323,14 +342,15 @@ def regulatory_revoke_key(
     req: RegulatoryRequestRevoke,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Owner revokes the viewing key for an already-approved request."""
     # Only the real owner of the address in the request decides (not whoever writes it in the body).
-    detail = _request_or_404(request_id)
+    detail = _request_or_404(rm, request_id)
     if req.owner_address.lower() != detail["owner_address"].lower():
         raise HTTPException(status_code=403, detail="owner_address does not match the request")
     require_owner(db, current_user, detail["owner_address"])
-    rm = _get_regulatory_manager()
     try:
         result = rm.revoke_approved_key(
             request_id=request_id,
@@ -346,9 +366,11 @@ def regulatory_get_request(
     request_id: str,
     current_user: Dict = Depends(_get_current_user),
     db=Depends(get_db),
+    mgr=Depends(get_vk_manager),
+    rm=Depends(get_regulatory_manager),
 ):
     """Return details of a specific regulatory access request (owner, requesting authority, compliance)."""
-    result = _request_or_404(request_id)
+    result = _request_or_404(rm, request_id)
     allowed = (
         owns_address(db, current_user, result["owner_address"])
         or (has_role(current_user, "authority") and result["requester_id"] == current_user["user_id"])
