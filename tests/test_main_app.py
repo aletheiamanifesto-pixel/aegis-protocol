@@ -215,10 +215,11 @@ class TestKYC:
             "country": "IT",
             "id_document_hash": "0x" + "a" * 64,
         }, headers=headers)
-        assert r.status_code in (200, 503)
-        if r.status_code == 200:
-            body = r.json()
-            assert body.get("kyc_verified") is True
+        # Submitting data does NOT verify the KYC: it stays "pending" until compliance decides.
+        assert r.status_code == 202
+        body = r.json()
+        assert body["kyc_verified"] is False
+        assert body["kyc_status"] == "pending"
 
     def test_kyc_unauthenticated(self, client):
         r = client.post("/compliance/kyc", json={
@@ -285,19 +286,29 @@ class TestProofGenerate:
 # 9. POST /viewing-keys/create
 # ---------------------------------------------------------------------------
 
+def _my_wallet(client: TestClient, headers: dict) -> str:
+    r = client.post("/wallet/create", json={"password": "walletpass"}, headers=headers)
+    assert r.status_code == 200
+    return r.json()["address"]
+
+
 class TestViewingKeys:
     def test_create_viewing_key(self, client):
         headers = _register_and_login(client, "_vk")
-        r = client.post("/viewing-keys/create", json={
-            "owner_address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-            "scope": "balance_only",
-            "duration_days": 30,
-        }, headers=headers)
+        address = _my_wallet(client, headers)
+        r = client.post("/viewing-keys/v2/create", json={"address": address}, headers=headers)
         assert r.status_code in (200, 503)
 
+    def test_create_viewing_key_for_someone_else_forbidden(self, client):
+        headers = _register_and_login(client, "_vk2")
+        r = client.post("/viewing-keys/v2/create", json={
+            "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+        }, headers=headers)
+        assert r.status_code == 403
+
     def test_create_viewing_key_unauthenticated(self, client):
-        r = client.post("/viewing-keys/create", json={
-            "owner_address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+        r = client.post("/viewing-keys/v2/create", json={
+            "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
         })
         assert r.status_code == 401
 
@@ -310,7 +321,7 @@ class TestTransactionSend:
     def test_send_transaction(self, client):
         headers = _register_and_login(client, "_tx")
         r = client.post("/transactions/send", json={
-            "from_address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            "from_address": _my_wallet(client, headers),
             "to_address": "0x1234567890123456789012345678901234567890",
             "amount": 100.0,
             "encrypted_key": "0x" + "a" * 64,
@@ -333,7 +344,7 @@ class TestTransactionSend:
         """Transactions exceeding single_tx_limit without KYC should be rejected by compliance."""
         headers = _register_and_login(client, "_tx_large")
         r = client.post("/transactions/send", json={
-            "from_address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            "from_address": _my_wallet(client, headers),
             "to_address": "0x1234567890123456789012345678901234567890",
             "amount": 6000.0,  # Exceeds single_tx_limit (5000) without KYC
             "encrypted_key": "0x" + "a" * 64,
