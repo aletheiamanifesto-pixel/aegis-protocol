@@ -12,7 +12,8 @@ const solc = (version, runs) => ({
   settings: { optimizer: { enabled: true, runs } },
 });
 
-const RPC_URL = process.env.RPC_URL || "https://rpc-amoy.polygon.technology";
+// Public Amoy RPC (the official rpc-amoy.polygon.technology is often unreachable); override with RPC_URL.
+const RPC_URL = process.env.RPC_URL || "https://polygon-amoy-bor-rpc.publicnode.com";
 const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [];
 
 export default defineConfig({

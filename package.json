@@ -12,7 +12,8 @@
     "test:circuits": "node --test noir_circuits/test/circuits.test.mjs noir_circuits/test/core.test.mjs",
     "build:circuits": "node scripts/build_circuits.mjs",
     "deploy:pool": "hardhat run scripts/deploy_pool.js --network amoy",
-    "app": "python3 -m http.server 8080 --directory app/demo"
+    "app": "python3 -m http.server 8080 --directory app/demo",
+    "demo:amoy": "hardhat run scripts/testnet/amoy_demo.js --network amoy"
   },
   "devDependencies": {
     "@aztec/bb.js": "5.3.0",

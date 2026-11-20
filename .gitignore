@@ -103,3 +103,5 @@ logs/
 
 # Hardhat 3 typechain output
 types/
+deployments/default.json
+deployments/localhost.json
