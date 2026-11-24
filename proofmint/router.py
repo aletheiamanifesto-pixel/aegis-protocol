@@ -9,6 +9,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from db import Base, get_db
+from security import require_roles
 from proofmint.ai_engine import validate_compliance
 from proofmint.blockchain_service import (
     create_passport_onchain,
@@ -26,6 +27,16 @@ from proofmint.schemas import (
 from proofmint.storage_service import get_from_ipfs, upload_to_ipfs
 
 router = APIRouter(prefix="/proofmint", tags=["proofmint"])
+
+# Limiti di prodotti per piano, allineati alla pagina prezzi (frontend/app/pricing).
+# Il piano e' deciso solo lato server: la registrazione parte sempre da "free"
+# e il passaggio a "pro" avviene tramite l'endpoint admin (dopo il pagamento).
+PLAN_LIMITS: dict[str, int] = {"free": 5, "pro": 500}
+DEFAULT_PLAN = "free"
+
+
+def _plan_limit(plan: str | None) -> int:
+    return PLAN_LIMITS.get(plan or DEFAULT_PLAN, PLAN_LIMITS[DEFAULT_PLAN])
 
 _tables_ready = False
 
@@ -163,7 +174,7 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
         name=payload.name,
         email=payload.email,
         api_key=api_key,
-        plan=payload.plan,
+        plan=DEFAULT_PLAN,
         operator_type=payload.operator_type,
         address=payload.address,
         country=payload.country,
@@ -181,6 +192,8 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
         "name": brand.name,
         "email": brand.email,
         "plan": brand.plan,
+        "requested_plan": payload.plan if payload.plan != brand.plan else None,
+        "products_limit": _plan_limit(brand.plan),
         "operator_type": brand.operator_type,
         "address": brand.address,
         "country": brand.country,
@@ -192,10 +205,37 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
     }
 
 
+@router.patch("/brands/{brand_id}/plan")
+def set_brand_plan(
+    brand_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(require_roles("admin")),
+):
+    """Cambia il piano di un brand. Solo admin (es. dopo conferma del pagamento)."""
+    _ensure_tables(db)
+    plan = str(payload.get("plan", "")).strip().lower()
+    if plan not in PLAN_LIMITS:
+        raise HTTPException(status_code=422, detail=f"Unknown plan. Allowed: {sorted(PLAN_LIMITS)}")
+    brand = db.query(Brand).filter(Brand.id == brand_id).first()
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand not found")
+    brand.plan = plan
+    db.commit()
+    return {"brand_id": brand.id, "plan": brand.plan, "products_limit": _plan_limit(brand.plan), "products_count": brand.products_count}
+
+
 @router.post("/products", status_code=201)
 def create_product(payload: ProductCreate, db: Session = Depends(get_db), api_key: str | None = Header(default=None, alias="X-API-Key")):
     _ensure_tables(db)
     brand = _get_brand_by_key(db, api_key)
+
+    limit = _plan_limit(brand.plan)
+    if (brand.products_count or 0) >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Product limit reached for plan '{brand.plan}' ({limit}). Upgrade required.",
+        )
 
     existing = db.query(Product).filter(Product.product_id == payload.product_id).first()
     if existing:
