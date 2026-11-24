@@ -320,3 +320,61 @@ def test_scope_header_requires_feature_flag():
     os.environ.pop("PROOFMINT_ALLOW_SCOPE_HEADER", None)
     blocked = client.get("/proofmint/verify/SKU-006/full", headers={"X-Viewing-Key-Scope": "regulator"})
     assert blocked.status_code == 401
+
+
+# --- Piani: enforcement lato server (agenti/2026-11-24) ---------------------
+
+def _register(email: str, plan: str = "free"):
+    response = client.post(
+        "/proofmint/brands/register",
+        json={"name": "Plan Brand", "email": email, "plan": plan},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _add_product(api_key: str, sku: str):
+    return client.post(
+        "/proofmint/products",
+        json={"product_id": sku, "product_name": "Item", "category": "textile"},
+        headers={"X-API-Key": api_key},
+    )
+
+
+def test_registration_cannot_self_assign_pro_plan():
+    body = _register("self-pro@proofmint.test", plan="pro")
+    assert body["plan"] == "free"
+    assert body["requested_plan"] == "pro"
+    assert body["products_limit"] == 5
+
+
+def test_free_plan_product_limit_is_enforced():
+    brand = _register("limit-free@proofmint.test")
+    for i in range(5):
+        assert _add_product(brand["api_key"], f"FREE-LIM-{i}").status_code == 201
+    blocked = _add_product(brand["api_key"], "FREE-LIM-5")
+    assert blocked.status_code == 402, blocked.text
+
+
+def test_pro_plan_lifts_limit():
+    from proofmint.models import Brand
+
+    brand = _register("limit-pro@proofmint.test")
+    for i in range(5):
+        assert _add_product(brand["api_key"], f"PRO-LIM-{i}").status_code == 201
+
+    db = _TEST_SESSION_LOCAL()
+    try:
+        row = db.query(Brand).filter(Brand.id == brand["brand_id"]).first()
+        row.plan = "pro"
+        db.commit()
+    finally:
+        db.close()
+
+    assert _add_product(brand["api_key"], "PRO-LIM-5").status_code == 201
+
+
+def test_plan_change_requires_admin_auth():
+    brand = _register("plan-admin@proofmint.test")
+    response = client.patch(f"/proofmint/brands/{brand['brand_id']}/plan", json={"plan": "pro"})
+    assert response.status_code == 401
