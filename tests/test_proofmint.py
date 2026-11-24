@@ -378,3 +378,78 @@ def test_plan_change_requires_admin_auth():
     brand = _register("plan-admin@proofmint.test")
     response = client.patch(f"/proofmint/brands/{brand['brand_id']}/plan", json={"plan": "pro"})
     assert response.status_code == 401
+
+
+# --- Correzioni dalla revisione di Hermes (AEG-8) ---------------------------
+
+def _set_brand(brand_id: int, **fields):
+    from proofmint.models import Brand
+
+    db = _TEST_SESSION_LOCAL()
+    try:
+        row = db.query(Brand).filter(Brand.id == brand_id).first()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _as_admin():
+    from proofmint.router import ADMIN_ONLY
+
+    app.dependency_overrides[ADMIN_ONLY] = lambda: {"user_id": "1", "role": "admin"}
+
+
+def _drop_admin():
+    from proofmint.router import ADMIN_ONLY
+
+    app.dependency_overrides.pop(ADMIN_ONLY, None)
+
+
+def test_admin_can_upgrade_plan_and_unknown_plan_is_rejected():
+    brand = _register("admin-ok@proofmint.test")
+    _as_admin()
+    try:
+        ok = client.patch(f"/proofmint/brands/{brand['brand_id']}/plan", json={"plan": " PRO "})
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["plan"] == "pro"
+        assert ok.json()["previous_plan"] == "free"
+        assert ok.json()["products_limit"] == 500
+
+        bad = client.patch(f"/proofmint/brands/{brand['brand_id']}/plan", json={"plan": "enterprise"})
+        assert bad.status_code == 422
+
+        wrong_type = client.patch(f"/proofmint/brands/{brand['brand_id']}/plan", json={"plan": 1})
+        assert wrong_type.status_code == 422
+    finally:
+        _drop_admin()
+
+
+def test_plan_value_is_normalized_when_reading_limits():
+    brand = _register("legacy-upper@proofmint.test")
+    _set_brand(brand["brand_id"], plan="PRO", products_count=5)
+    assert _add_product(brand["api_key"], "LEGACY-UPPER-1").status_code == 201
+
+
+def test_duplicate_sku_at_limit_returns_400_not_402():
+    brand = _register("dup-at-limit@proofmint.test")
+    for i in range(5):
+        assert _add_product(brand["api_key"], f"DUP-LIM-{i}").status_code == 201
+    again = _add_product(brand["api_key"], "DUP-LIM-0")
+    assert again.status_code == 400, again.text
+
+
+def test_counter_matches_products_after_limit():
+    from proofmint.models import Brand, Product
+
+    brand = _register("counter-sync@proofmint.test")
+    for i in range(7):
+        _add_product(brand["api_key"], f"SYNC-{i}")
+    db = _TEST_SESSION_LOCAL()
+    try:
+        row = db.query(Brand).filter(Brand.id == brand["brand_id"]).first()
+        real = db.query(Product).filter(Product.brand_id == brand["brand_id"]).count()
+        assert row.products_count == real == 5
+    finally:
+        db.close()

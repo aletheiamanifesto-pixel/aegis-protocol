@@ -1,11 +1,13 @@
 import hashlib
 import json
+import logging
 import os
 import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import desc
+from sqlalchemy import desc, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db import Base, get_db
@@ -18,6 +20,7 @@ from proofmint.blockchain_service import (
 )
 from proofmint.models import Brand, DigitalProductPassport, Product
 from proofmint.schemas import (
+    BrandPlanUpdate,
     BrandRegister,
     DPPCreate,
     DPPResponse,
@@ -35,8 +38,25 @@ PLAN_LIMITS: dict[str, int] = {"free": 5, "pro": 500}
 DEFAULT_PLAN = "free"
 
 
+logger = logging.getLogger(__name__)
+
+# Dipendenza admin a livello di modulo: i test possono sovrascriverla con
+# app.dependency_overrides[ADMIN_ONLY] (require_roles crea una funzione nuova a ogni chiamata).
+ADMIN_ONLY = require_roles("admin")
+
+
+def _normalize_plan(plan: str | None) -> str:
+    return str(plan or "").strip().lower()
+
+
 def _plan_limit(plan: str | None) -> int:
-    return PLAN_LIMITS.get(plan or DEFAULT_PLAN, PLAN_LIMITS[DEFAULT_PLAN])
+    normalized = _normalize_plan(plan)
+    if normalized in PLAN_LIMITS:
+        return PLAN_LIMITS[normalized]
+    # Piano sconosciuto (riga legacy o modifica manuale): lo segnaliamo invece di
+    # ricadere in silenzio su "free".
+    logger.warning("ProofMint: piano sconosciuto %r, applico il limite di %r", plan, DEFAULT_PLAN)
+    return PLAN_LIMITS[DEFAULT_PLAN]
 
 _tables_ready = False
 
@@ -208,21 +228,31 @@ def register_brand(payload: BrandRegister, db: Session = Depends(get_db)):
 @router.patch("/brands/{brand_id}/plan")
 def set_brand_plan(
     brand_id: int,
-    payload: dict,
+    payload: BrandPlanUpdate,
     db: Session = Depends(get_db),
-    _admin: dict = Depends(require_roles("admin")),
+    admin: dict = Depends(ADMIN_ONLY),
 ):
     """Cambia il piano di un brand. Solo admin (es. dopo conferma del pagamento)."""
     _ensure_tables(db)
-    plan = str(payload.get("plan", "")).strip().lower()
+    plan = _normalize_plan(payload.plan)
     if plan not in PLAN_LIMITS:
         raise HTTPException(status_code=422, detail=f"Unknown plan. Allowed: {sorted(PLAN_LIMITS)}")
     brand = db.query(Brand).filter(Brand.id == brand_id).first()
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
+    previous = brand.plan
     brand.plan = plan
     db.commit()
-    return {"brand_id": brand.id, "plan": brand.plan, "products_limit": _plan_limit(brand.plan), "products_count": brand.products_count}
+    used = brand.products_count or 0
+    logger.info("ProofMint: piano brand %s %r -> %r (admin %s)", brand.id, previous, plan, admin.get("user_id"))
+    return {
+        "brand_id": brand.id,
+        "plan": brand.plan,
+        "previous_plan": previous,
+        "products_limit": _plan_limit(brand.plan),
+        "products_count": used,
+        "over_limit": used > _plan_limit(brand.plan),
+    }
 
 
 @router.post("/products", status_code=201)
@@ -230,16 +260,28 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db), api_ke
     _ensure_tables(db)
     brand = _get_brand_by_key(db, api_key)
 
+    # 1) Duplicato prima del limite: un retry dello stesso SKU riceve 400, non 402.
+    existing = db.query(Product).filter(Product.product_id == payload.product_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Product already exists")
+
+    # 2) Incremento atomico con guardia: due richieste concorrenti non possono
+    #    superare il limite (niente check-then-act su un valore letto in Python).
     limit = _plan_limit(brand.plan)
-    if (brand.products_count or 0) >= limit:
+    reserved = (
+        db.query(Brand)
+        .filter(Brand.id == brand.id, func.coalesce(Brand.products_count, 0) < limit)
+        .update(
+            {Brand.products_count: func.coalesce(Brand.products_count, 0) + 1},
+            synchronize_session=False,
+        )
+    )
+    if reserved != 1:
+        db.rollback()
         raise HTTPException(
             status_code=402,
             detail=f"Product limit reached for plan '{brand.plan}' ({limit}). Upgrade required.",
         )
-
-    existing = db.query(Product).filter(Product.product_id == payload.product_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Product already exists")
 
     product = Product(
         product_id=payload.product_id,
@@ -247,9 +289,13 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db), api_ke
         category=payload.category,
         brand_id=brand.id,
     )
-    brand.products_count += 1
     db.add(product)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # SKU duplicato inserito in parallelo: annulla anche la prenotazione del contatore.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Product already exists")
     db.refresh(product)
 
     return {

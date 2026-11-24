@@ -134,6 +134,12 @@ class BrandRegister(BaseModel):
     facility_id: str | None = None
 
 
+class BrandPlanUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: str
+
+
 class ProductCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
